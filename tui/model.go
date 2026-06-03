@@ -50,9 +50,12 @@ type model struct {
 	expandReasoning bool
 	expandTools     bool
 
-	// Startup logo state
-	showLogo  bool
-	logoFrame int
+	// Startup logo state (eye animation)
+	showLogo        bool
+	pupilOffset     int
+	pupilDirection  int  // 1 = moving right, -1 = moving left
+	pupilMax        int  // total positions in sweep
+	maxOffset       int  // max offset value for renderEye
 
 	// Streaming state
 	loading       bool
@@ -81,8 +84,12 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 		header: HeaderData{
 			Model: ag.ModelName(),
 		},
-		spinner:  s,
-		showLogo: true,
+		spinner:        s,
+		showLogo:       true,
+		pupilOffset:    0,
+		pupilDirection: 1,
+		pupilMax:       24, // 24 positions for smooth sweep
+		maxOffset:      24,
 	}
 }
 
@@ -94,7 +101,8 @@ func (m *model) logoTick() tea.Cmd {
 	if !m.showLogo {
 		return nil
 	}
-	return tea.Tick(700, func(t time.Time) tea.Msg {
+	// ~30 FPS for smooth pupil animation
+	return tea.Tick(33, func(t time.Time) tea.Msg {
 		return logoAnimMsg{}
 	})
 }
@@ -137,7 +145,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.showLogo {
 			return m, nil
 		}
-		m.logoFrame = (m.logoFrame + 1) % len(logoFrames)
+		// Advance pupil: sweep left-to-right, then right-to-left
+		m.pupilOffset += m.pupilDirection
+		if m.pupilOffset >= m.pupilMax {
+			m.pupilOffset = m.pupilMax - 1
+			m.pupilDirection = -1
+		} else if m.pupilOffset < 0 {
+			m.pupilOffset = 0
+			m.pupilDirection = 1
+		}
 		m.updateViewport()
 		return m, m.logoTick()
 
@@ -660,6 +676,6 @@ func (m *model) editFile(path string) tea.Cmd {
 // --- rendering ---
 
 func (m *model) updateViewport() {
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.logoFrame)
+	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.pupilOffset, m.maxOffset)
 	m.viewport.SetContent(content)
 }

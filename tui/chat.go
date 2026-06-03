@@ -15,12 +15,12 @@ type ChatMessage struct {
 // renderMessages renders all chat messages plus optional streaming content.
 // width is the available viewport width for the chat area.
 func renderMessages(messages []ChatMessage, streamContent, streamReasoning string,
-	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, logoFrame int) string {
+	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, pupilOffset, maxOffset int) string {
 
 	var b strings.Builder
 
 	if showLogo && len(messages) == 0 {
-		b.WriteString(renderLogo(width, logoFrame))
+		b.WriteString(renderEye(width, pupilOffset, maxOffset))
 		return b.String()
 	}
 
@@ -224,83 +224,73 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 
 // --- Startup logo ---
 
-var logoFrames = []string{
-	// Frame 0 — bars low
-	"" +
-		"  ╔═══════════════════════════╗\n" +
-		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
-		"  ║   ║ ░ ║ ║ ░ ║ ║ ░ ║      ║\n" +
-		"  ║   ║ ░ ║ ║ ░ ║ ║ ░ ║      ║\n" +
-		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
-		"  ║     │     │     │         ║\n" +
-		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
-		"  ║   ║  ████████████ ║       ║\n" +
-		"  ║   ╚═══════════════╝       ║\n" +
-		"  ║         🔥               ║\n" +
-		"  ╚═══════════════════════════╝",
-
-	// Frame 1 — bars mid
-	"" +
-		"  ╔═══════════════════════════╗\n" +
-		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
-		"  ║   ║ █ ║ ║ ░ ║ ║ █ ║      ║\n" +
-		"  ║   ║ █ ║ ║ ░ ║ ║ █ ║      ║\n" +
-		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
-		"  ║     │     │     │         ║\n" +
-		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
-		"  ║   ║  ██████████████║       ║\n" +
-		"  ║   ╚═══════════════╝       ║\n" +
-		"  ║         🔥🔥             ║\n" +
-		"  ╚═══════════════════════════╝",
-
-	// Frame 2 — bars high
-	"" +
-		"  ╔═══════════════════════════╗\n" +
-		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
-		"  ║   ║ █ ║ ║ █ ║ ║ █ ║      ║\n" +
-		"  ║   ║ █ ║ ║ █ ║ ║ █ ║      ║\n" +
-		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
-		"  ║     │     │     │         ║\n" +
-		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
-		"  ║   ║  ████████████ ║       ║\n" +
-		"  ║   ╚═══════════════╝       ║\n" +
-		"  ║        🔥🔥🔥🔥          ║\n" +
-		"  ╚═══════════════════════════╝",
-}
+// logoFrames removed — now using renderEye() for procedural eye animation
 
 var flareTagline = "Server Management AI Agent"
 
-func renderLogo(width int, frame int) string {
+// renderEye generates an eye ASCII art frame with the pupil at the given offset.
+// offset ranges 0..maxOffset, mapping the pupil from far-left to far-right.
+func renderEye(width int, offset, maxOffset int) string {
+	// Eye template — the iris/pupil line has spaces where the pupil slides:
+	//
+	//   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+	//  ▓▓              ▓▓
+	// ▓▓   ▄▄▄▄▄▄▄▄    ▓▓
+	// ▓▓  █  ●      █  ▓▓   ← pupil rides here (15 chars inner width)
+	// ▓▓   ▀▀▀▀▀▀▀▀    ▓▓
+	//  ▓▓              ▓▓
+	//   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+
+	// Calculate pupil position. Inner width between iris borders (█ █) = 13 spaces
+	innerWidth := 13
+	if maxOffset <= 0 {
+		maxOffset = 1
+	}
+	// Map 0..maxOffset to 0..innerWidth-1
+	pos := 0
+	if maxOffset > 1 {
+		pos = offset * (innerWidth - 1) / (maxOffset - 1)
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= innerWidth {
+		pos = innerWidth - 1
+	}
+
+	// Build the pupil line: ▓▓  █ [spaces][●][spaces] █  ▓▓
+	leftSpaces := pos
+	rightSpaces := innerWidth - 1 - pos
+	pupilLine := "▓▓  █" + strings.Repeat(" ", leftSpaces) + "●" + strings.Repeat(" ", rightSpaces) + "█  ▓▓"
+
+	lines := []string{
+		strings.Repeat(" ", 2) + "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
+		strings.Repeat(" ", 1) + "▓▓" + strings.Repeat(" ", 14) + "▓▓",
+		"▓▓   ▄▄▄▄▄▄▄▄    ▓▓",
+		pupilLine,
+		"▓▓   ▀▀▀▀▀▀▀▀    ▓▓",
+		strings.Repeat(" ", 1) + "▓▓" + strings.Repeat(" ", 14) + "▓▓",
+		strings.Repeat(" ", 2) + "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
+	}
+
 	var b strings.Builder
 
-	if frame < 0 || frame >= len(logoFrames) {
-		frame = 0
-	}
-	logo := logoFrames[frame]
-	logoLines := strings.Split(logo, "\n")
-
 	// Center vertically
-	topPad := 2
-	for i := 0; i < topPad; i++ {
-		b.WriteString("\n")
-	}
+	b.WriteString("\n\n")
 
-	// Render logo lines centered (using rune count for proper alignment)
-	for _, line := range logoLines {
-		runes := []rune(strings.TrimRight(line, " "))
-		contentWidth := len(runes)
-		pad := (width - contentWidth) / 2
+	// Render each line, centered
+	for _, line := range lines {
+		runes := []rune(line)
+		pad := (width - len(runes)) / 2
 		if pad < 0 {
 			pad = 0
 		}
 		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(assistantContentStyle.Render(string(runes)) + "\n")
+		b.WriteString(assistantContentStyle.Render(line) + "\n")
 	}
 
-	// Blank line
+	// Tagline
 	b.WriteString("\n")
-
-	// Tagline centered
 	tagRunes := []rune(flareTagline)
 	tagPad := (width - len(tagRunes)) / 2
 	if tagPad < 0 {
@@ -309,7 +299,7 @@ func renderLogo(width int, frame int) string {
 	b.WriteString(strings.Repeat(" ", tagPad))
 	b.WriteString(dimmedStyle.Render(flareTagline) + "\n\n")
 
-	// Hint centered
+	// Hint
 	hint := "Send a message to start."
 	hintRunes := []rune(hint)
 	hintPad := (width - len(hintRunes)) / 2
