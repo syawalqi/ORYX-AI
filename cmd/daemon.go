@@ -1,5 +1,8 @@
 package cmd
 
+// Version is the current Flare release version.
+const Version = 0.5.0
+
 import (
 	"fmt"
 	"os"
