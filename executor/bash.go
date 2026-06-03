@@ -1,3 +1,4 @@
+// Package executor runs shell commands with timeout and output limits.
 package executor
 
 import (
