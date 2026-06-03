@@ -223,29 +223,32 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 	return b.String()
 }
 
-// --- Startup logo (procedural eye animation) ---
+// --- Startup logo (ASCII art style eye animation) ---
 
 var flareTagline = "Server Management AI Agent"
 
-// renderEye generates a large eye with a moving iris+pupil.
+// Character density ramp — dark to light
+// Used within the iris to create a smooth gradient
+var irisRamp = []rune("@%#*+=-")
+
+// renderEye generates a classic ASCII-art style eye with a moving iris+pupil.
 // phase ranges 0.0 (looking left) to 1.0 (looking right).
-// The entire iris circle shifts as one unit — the pupil moves with the iris.
+// Uses an elliptical eye opening with character density shading.
 func renderEye(width int, phase float64) string {
-	// Interior dimensions (between the ║ borders)
-	iw := 46 // interior width
-	ih := 15 // interior height (16 including border)
+	gW := 46 // grid width
+	gH := 14 // grid height
+
+	// Eye ellipse parameters
+	eyeCX := gW / 2       // center X
+	eyeCY := gH / 2       // center Y
+	eyeA := 19.0          // horizontal radius
+	eyeB := 6.0           // vertical radius
 
 	// Iris circle parameters
-	radius := 7.0
-	cy := ih / 2 // iris center Y (middle of interior)
-	cxMin := int(radius) + 1
-	cxMax := iw - int(radius) - 1
-	cxRange := cxMax - cxMin
-	if cxRange < 1 {
-		cxRange = 1
-	}
+	irisRadius := 5.0
+	irisCY := eyeCY
 
-	// Clamp phase to [0.0, 1.0]
+	// Clamp and compute iris sweep range
 	if phase < 0.0 {
 		phase = 0.0
 	}
@@ -253,67 +256,79 @@ func renderEye(width int, phase float64) string {
 		phase = 1.0
 	}
 
-	// Iris center X — smoothly interpolated
-	cx := cxMin + int(phase*float64(cxRange))
+	irisMinX := eyeCX - int(eyeA) + int(irisRadius) + 2
+	irisMaxX := eyeCX + int(eyeA) - int(irisRadius) - 2
+	irisRange := irisMaxX - irisMinX
+	if irisRange < 1 {
+		irisRange = 1
+	}
+	irisCX := irisMinX + int(phase*float64(irisRange))
 
-	// --- Build the interior grid ---
-	grid := make([][]rune, ih)
-	for y := 0; y < ih; y++ {
-		grid[y] = make([]rune, iw)
-		for x := 0; x < iw; x++ {
-			grid[y][x] = '░' // sclera fill (light shade)
+	// Build the grid
+	grid := make([][]rune, gH)
+	for y := 0; y < gH; y++ {
+		grid[y] = make([]rune, gW)
+		for x := 0; x < gW; x++ {
+			grid[y][x] = ' '
 		}
 	}
 
-	// Draw the iris as a filled circle at (cx, cy)
-	// Gradient: ● pupil → █ dark ring → ▓ iris → ▒ edge → ░ sclera
-	bbox := int(radius) + 1
-	for dy := -bbox; dy <= bbox; dy++ {
-		for dx := -bbox; dx <= bbox; dx++ {
-			dist := math.Sqrt(float64(dx*dx + dy*dy))
-			px := cx + dx
-			py := cy + dy
-			if px >= 0 && px < iw && py >= 0 && py < ih {
-				switch {
-				case dist <= 0.5:
-					grid[py][px] = '●' // single-cell pupil
-				case dist <= 3.5:
-					grid[py][px] = '█' // dark ring around pupil
-				case dist <= radius - 0.3:
-					grid[py][px] = '▓' // outer iris body
-				case dist <= radius + 0.5:
-					grid[py][px] = '▒' // soft edge transition to sclera
+	// Render the eye
+	for y := 0; y < gH; y++ {
+		for x := 0; x < gW; x++ {
+			ex := float64(x - eyeCX)
+			ey := float64(y - eyeCY)
+
+			// Check if inside the elliptical eye opening
+			insideEye := (ex*ex)/(eyeA*eyeA)+(ey*ey)/(eyeB*eyeB) <= 1.0
+			if !insideEye {
+				continue
+			}
+
+			// Distance from iris center
+			dx := float64(x - irisCX)
+			dy := float64(y - irisCY)
+			dist := math.Sqrt(dx*dx + dy*dy)
+
+			if dist <= 1.0 {
+				// Pupil
+				grid[y][x] = 'O'
+			} else if dist <= irisRadius {
+				// Iris gradient: map distance to density ramp
+				normalized := (dist - 1.0) / (irisRadius - 1.0)
+				idx := int(normalized * float64(len(irisRamp)-1))
+				if idx >= len(irisRamp) {
+					idx = len(irisRamp) - 1
 				}
+				if idx < 0 {
+					idx = 0
+				}
+				grid[y][x] = irisRamp[idx]
+			} else {
+				// Sclera
+				grid[y][x] = '.'
 			}
 		}
 	}
 
-	// --- Build the bordered output ---
+	// --- Build output ---
 	var b strings.Builder
 	b.WriteString("\n")
 
-	outerW := iw + 2 // +2 for left/right ║ chars
-	pad := (width - outerW) / 2
+	pad := (width - gW) / 2
 	if pad < 0 {
 		pad = 0
 	}
 
-	// Top border
-	b.WriteString(strings.Repeat(" ", pad) +
-		assistantContentStyle.Render("╔"+strings.Repeat("═", iw)+"╗") + "\n")
-
-	// Content rows with side borders
-	for y := 0; y < ih; y++ {
+	for y := 0; y < gH; y++ {
 		line := string(grid[y])
-		b.WriteString(strings.Repeat(" ", pad) +
-			assistantContentStyle.Render("║"+line+"║") + "\n")
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(assistantContentStyle.Render(line) + "\n")
 	}
 
-	// Bottom border
-	b.WriteString(strings.Repeat(" ", pad) +
-		assistantContentStyle.Render("╚"+strings.Repeat("═", iw)+"╝") + "\n\n")
+	b.WriteString("\n")
 
-	// Tagline centered
+	// Tagline
 	tagPad := (width - len(flareTagline)) / 2
 	if tagPad < 0 {
 		tagPad = 0
