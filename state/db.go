@@ -1,3 +1,4 @@
+// Package state provides persistent storage for Flare daemon state.
 package state
 
 import (
