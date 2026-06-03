@@ -1,4 +1,4 @@
-.PHONY: build clean test
+.PHONY: build clean test run fmt
 
 build:
 	go build -o flare .
@@ -11,3 +11,6 @@ test:
 
 run: build
 	./flare chat
+
+fmt:
+	go fmt ./...
