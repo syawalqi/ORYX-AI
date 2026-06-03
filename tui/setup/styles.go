@@ -2,6 +2,7 @@ package setup
 
 import "github.com/charmbracelet/lipgloss"
 
+// Style variables for the setup wizard TUI.
 var (
 	// Colors
 	primary   = lipgloss.Color("#7C3AED") // purple
