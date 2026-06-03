@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -15,12 +16,12 @@ type ChatMessage struct {
 // renderMessages renders all chat messages plus optional streaming content.
 // width is the available viewport width for the chat area.
 func renderMessages(messages []ChatMessage, streamContent, streamReasoning string,
-	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, pupilOffset, maxOffset int) string {
+	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, pupilPhase float64) string {
 
 	var b strings.Builder
 
 	if showLogo && len(messages) == 0 {
-		b.WriteString(renderEye(width, pupilOffset, maxOffset))
+		b.WriteString(renderEye(width, pupilPhase))
 		return b.String()
 	}
 
@@ -222,92 +223,110 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 	return b.String()
 }
 
-// --- Startup logo ---
-
-// logoFrames removed — now using renderEye() for procedural eye animation
+// --- Startup logo (procedural eye animation) ---
 
 var flareTagline = "Server Management AI Agent"
 
-// renderEye generates an eye ASCII art frame with the pupil at the given offset.
-// offset ranges 0..maxOffset, mapping the pupil from far-left to far-right.
-func renderEye(width int, offset, maxOffset int) string {
-	// Eye template — the iris/pupil line has spaces where the pupil slides:
-	//
-	//   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-	//  ▓▓              ▓▓
-	// ▓▓   ▄▄▄▄▄▄▄▄    ▓▓
-	// ▓▓  █  ●      █  ▓▓   ← pupil rides here (15 chars inner width)
-	// ▓▓   ▀▀▀▀▀▀▀▀    ▓▓
-	//  ▓▓              ▓▓
-	//   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+// renderEye generates a large eye with a moving iris+pupil.
+// phase ranges 0.0 (looking left) to 1.0 (looking right).
+// The entire iris circle shifts as one unit — the pupil moves with the iris.
+func renderEye(width int, phase float64) string {
+	// Interior dimensions (between the ║ borders)
+	iw := 46 // interior width
+	ih := 15 // interior height (16 including border)
 
-	// Calculate pupil position. Inner width between iris borders (█ █) = 13 spaces
-	innerWidth := 13
-	if maxOffset <= 0 {
-		maxOffset = 1
-	}
-	// Map 0..maxOffset to 0..innerWidth-1
-	pos := 0
-	if maxOffset > 1 {
-		pos = offset * (innerWidth - 1) / (maxOffset - 1)
-	}
-	if pos < 0 {
-		pos = 0
-	}
-	if pos >= innerWidth {
-		pos = innerWidth - 1
+	// Iris circle parameters
+	radius := 7.0
+	cy := ih / 2 // iris center Y (middle of interior)
+	cxMin := int(radius) + 1
+	cxMax := iw - int(radius) - 1
+	cxRange := cxMax - cxMin
+	if cxRange < 1 {
+		cxRange = 1
 	}
 
-	// Build the pupil line: ▓▓  █ [spaces][●][spaces] █  ▓▓
-	leftSpaces := pos
-	rightSpaces := innerWidth - 1 - pos
-	pupilLine := "▓▓  █" + strings.Repeat(" ", leftSpaces) + "●" + strings.Repeat(" ", rightSpaces) + "█  ▓▓"
-
-	lines := []string{
-		strings.Repeat(" ", 2) + "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
-		strings.Repeat(" ", 1) + "▓▓" + strings.Repeat(" ", 14) + "▓▓",
-		"▓▓   ▄▄▄▄▄▄▄▄    ▓▓",
-		pupilLine,
-		"▓▓   ▀▀▀▀▀▀▀▀    ▓▓",
-		strings.Repeat(" ", 1) + "▓▓" + strings.Repeat(" ", 14) + "▓▓",
-		strings.Repeat(" ", 2) + "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
+	// Clamp phase to [0.0, 1.0]
+	if phase < 0.0 {
+		phase = 0.0
+	}
+	if phase > 1.0 {
+		phase = 1.0
 	}
 
-	var b strings.Builder
+	// Iris center X — smoothly interpolated
+	cx := cxMin + int(phase*float64(cxRange))
 
-	// Center vertically
-	b.WriteString("\n\n")
-
-	// Render each line, centered
-	for _, line := range lines {
-		runes := []rune(line)
-		pad := (width - len(runes)) / 2
-		if pad < 0 {
-			pad = 0
+	// --- Build the interior grid ---
+	grid := make([][]rune, ih)
+	for y := 0; y < ih; y++ {
+		grid[y] = make([]rune, iw)
+		for x := 0; x < iw; x++ {
+			grid[y][x] = '░' // sclera fill (light shade)
 		}
-		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(assistantContentStyle.Render(line) + "\n")
 	}
 
-	// Tagline
+	// Draw the iris as a filled circle at (cx, cy)
+	// Gradient: ● pupil → █ dark ring → ▓ iris → ▒ edge → ░ sclera
+	bbox := int(radius) + 1
+	for dy := -bbox; dy <= bbox; dy++ {
+		for dx := -bbox; dx <= bbox; dx++ {
+			dist := math.Sqrt(float64(dx*dx + dy*dy))
+			px := cx + dx
+			py := cy + dy
+			if px >= 0 && px < iw && py >= 0 && py < ih {
+				switch {
+				case dist <= 0.5:
+					grid[py][px] = '●' // single-cell pupil
+				case dist <= 3.5:
+					grid[py][px] = '█' // dark ring around pupil
+				case dist <= radius - 0.3:
+					grid[py][px] = '▓' // outer iris body
+				case dist <= radius + 0.5:
+					grid[py][px] = '▒' // soft edge transition to sclera
+				}
+			}
+		}
+	}
+
+	// --- Build the bordered output ---
+	var b strings.Builder
 	b.WriteString("\n")
-	tagRunes := []rune(flareTagline)
-	tagPad := (width - len(tagRunes)) / 2
+
+	outerW := iw + 2 // +2 for left/right ║ chars
+	pad := (width - outerW) / 2
+	if pad < 0 {
+		pad = 0
+	}
+
+	// Top border
+	b.WriteString(strings.Repeat(" ", pad) +
+		assistantContentStyle.Render("╔"+strings.Repeat("═", iw)+"╗") + "\n")
+
+	// Content rows with side borders
+	for y := 0; y < ih; y++ {
+		line := string(grid[y])
+		b.WriteString(strings.Repeat(" ", pad) +
+			assistantContentStyle.Render("║"+line+"║") + "\n")
+	}
+
+	// Bottom border
+	b.WriteString(strings.Repeat(" ", pad) +
+		assistantContentStyle.Render("╚"+strings.Repeat("═", iw)+"╝") + "\n\n")
+
+	// Tagline centered
+	tagPad := (width - len(flareTagline)) / 2
 	if tagPad < 0 {
 		tagPad = 0
 	}
-	b.WriteString(strings.Repeat(" ", tagPad))
-	b.WriteString(dimmedStyle.Render(flareTagline) + "\n\n")
+	b.WriteString(strings.Repeat(" ", tagPad) + dimmedStyle.Render(flareTagline) + "\n")
 
 	// Hint
 	hint := "Send a message to start."
-	hintRunes := []rune(hint)
-	hintPad := (width - len(hintRunes)) / 2
+	hintPad := (width - len(hint)) / 2
 	if hintPad < 0 {
 		hintPad = 0
 	}
-	b.WriteString(strings.Repeat(" ", hintPad))
-	b.WriteString(dimmedStyle.Render(hint) + "\n")
+	b.WriteString(strings.Repeat(" ", hintPad) + dimmedStyle.Render(hint) + "\n")
 
 	return b.String()
 }
