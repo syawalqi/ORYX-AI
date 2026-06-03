@@ -1,11 +1,14 @@
-// SPDX-License-Identifier: MIT
-// Flare — Server Management AI Agent
-// Copyright (c) 2026 Galih Maulana Syawalqi
+     1|// SPDX-License-Identifier: MIT
+     2|// Flare — Server Management AI Agent
+     3|// Copyright (c) 2026 Galih Maulana Syawalqi
+     4|
+     5|package main
 
-package main
-
-import "github.com/syawalqi/flare/cmd"
-
-func main() {
-    cmd.Execute()
-}
+import "flag"
+     6|
+     7|import "github.com/syawalqi/flare/cmd"
+     8|
+     9|func main() {
+    10|    cmd.Execute()
+    11|}
+    12|
