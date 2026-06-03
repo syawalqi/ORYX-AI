@@ -115,14 +115,30 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 	b.WriteString(thoughtStyle.Render(left+strings.Repeat("═", fill)+right) + "\n")
 
 	if expanded || n <= 3 {
-		// Show all lines
+		// Show all lines, truncated to fit
+		maxLine := width - 5
+		if maxLine < 10 {
+			maxLine = 10
+		}
 		for _, line := range lines {
-			b.WriteString(thoughtStyle.Render("║ "+line) + "\n")
+			runes := []rune(line)
+			if len(runes) > maxLine {
+				runes = append(runes[:maxLine-3], []rune("...")...)
+			}
+			b.WriteString(thoughtStyle.Render("║ "+string(runes))+"\n")
 		}
 	} else {
-		// Show first 3 lines + "..."
+		// Show first 3 lines + "...", truncated to fit
+		maxLine := width - 5
+		if maxLine < 10 {
+			maxLine = 10
+		}
 		for i := 0; i < 3 && i < n; i++ {
-			b.WriteString(thoughtStyle.Render("║ "+lines[i]) + "\n")
+			runes := []rune(lines[i])
+			if len(runes) > maxLine {
+				runes = append(runes[:maxLine-3], []rune("...")...)
+			}
+			b.WriteString(thoughtStyle.Render("║ "+string(runes))+"\n")
 		}
 		b.WriteString(thoughtStyle.Render(fmt.Sprintf("║ ... (%d more lines)", n-3)) + "\n")
 	}

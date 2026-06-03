@@ -63,7 +63,7 @@ type model struct {
 func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir string) tea.Model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
-	s.Spinner = spinner.Dot
+	s.Spinner = spinner.Line
 
 	return &model{
 		agent:        ag,
@@ -311,14 +311,14 @@ func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 		m.streamToolRun = false
 		m.updateViewport()
 		m.viewport.GotoBottom()
-		return m, m.pollStream()
+		return m, tea.Batch(m.pollStream(), m.spinner.Tick)
 	}
 
 	if result.Reasoning != "" {
 		m.streamReasoning.WriteString(result.Reasoning)
 		m.updateViewport()
 		m.viewport.GotoBottom()
-		return m, m.pollStream()
+		return m, tea.Batch(m.pollStream(), m.spinner.Tick)
 	}
 
 	if result.ToolResult != nil {
@@ -338,7 +338,7 @@ func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 		m.streamMsgs = append(m.streamMsgs, summary)
 		m.updateViewport()
 		m.viewport.GotoBottom()
-		return m, m.pollStream()
+		return m, tea.Batch(m.pollStream(), m.spinner.Tick)
 	}
 
 	if result.ToolCalls != nil && len(result.ToolCalls) > 0 {
