@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"math"
 	"strings"
 )
 
@@ -16,12 +15,12 @@ type ChatMessage struct {
 // renderMessages renders all chat messages plus optional streaming content.
 // width is the available viewport width for the chat area.
 func renderMessages(messages []ChatMessage, streamContent, streamReasoning string,
-	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, pupilPhase float64) string {
+	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, viewportHeight int) string {
 
 	var b strings.Builder
 
 	if showLogo && len(messages) == 0 {
-		b.WriteString(renderEye(width, pupilPhase))
+		b.WriteString(renderEye(width, viewportHeight))
 		return b.String()
 	}
 
@@ -104,7 +103,6 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 	var b strings.Builder
 	n := len(lines)
 
-	// Title line with +/- indicator
 	var toggleInd string
 	if expanded {
 		toggleInd = "[-]"
@@ -121,7 +119,6 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 	b.WriteString(thoughtStyle.Render(left+strings.Repeat("═", fill)+right) + "\n")
 
 	if expanded || n <= 3 {
-		// Show all lines, truncated to fit
 		maxLine := width - 5
 		if maxLine < 10 {
 			maxLine = 10
@@ -134,7 +131,6 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 			b.WriteString(thoughtStyle.Render("║ "+string(runes))+"\n")
 		}
 	} else {
-		// Show first 3 lines + "...", truncated to fit
 		maxLine := width - 5
 		if maxLine < 10 {
 			maxLine = 10
@@ -165,7 +161,6 @@ func renderToolBlock(b *strings.Builder, content string, width int, expanded boo
 	maxLines := 8
 	showAll := expanded || n <= maxLines
 
-	// Header
 	b.WriteString(dimmedStyle.Render("  Script Output") + "\n")
 
 	if showAll {
@@ -223,112 +218,71 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 	return b.String()
 }
 
-// --- Startup logo (ASCII art style eye animation) ---
+// --- Startup logo (highly detailed static ASCII eye) ---
 
-var flareTagline = "Server Management AI Agent"
+var flareTagline = "Flare - Server Management AI Agent"
 
-// Character density ramp — dark to light
-// Used within the iris to create a smooth gradient
-var irisRamp = []rune("@%#*+=-")
-
-// renderEye generates a classic ASCII-art style eye with a moving iris+pupil.
-// phase ranges 0.0 (looking left) to 1.0 (looking right).
-// Uses an elliptical eye opening with character density shading.
-func renderEye(width int, phase float64) string {
-	gW := 46 // grid width
-	gH := 14 // grid height
-
-	// Eye ellipse parameters
-	eyeCX := gW / 2       // center X
-	eyeCY := gH / 2       // center Y
-	eyeA := 19.0          // horizontal radius
-	eyeB := 6.0           // vertical radius
-
-	// Iris circle parameters
-	irisRadius := 5.0
-	irisCY := eyeCY
-
-	// Clamp and compute iris sweep range
-	if phase < 0.0 {
-		phase = 0.0
-	}
-	if phase > 1.0 {
-		phase = 1.0
+// renderEye displays the user's custom ASCII art eclipse/petal design.
+func renderEye(width int, viewportHeight int) string {
+	art := []string{
+		":            .:::.            :",
+		"                    :::::          :--=--:          :::::        ",
+		"                  :::::::         :-+***+-:         :::::::      ",
+		"                ::::::::::       :=+*%@##+=:       ::::::::::        ",
+		"               :::::::::::::     -=*%@@@#*+-     :::::::::::::      ",
+		"               ---::::::::::::   -+#%@@@%#+-   ::::::::::::---       ",
+		"               ---:::::::::::::  --+*@@@*+--  :::::::::::::---     ",
+		"                ---::::::::::::: :=*-@@@-*=: :::::::::::::---        ",
+		"                  --:::::::::::::::+**@**+::::::::::::::--      ",
+		"                    --::::::::::.::-=+++=-::.:::::::::::--         ",
+		"                       --:::::::::.:-----:.:::::::::--          ",
+		"                           --:::::::#@#@#:::::::--                   ",
 	}
 
-	irisMinX := eyeCX - int(eyeA) + int(irisRadius) + 2
-	irisMaxX := eyeCX + int(eyeA) - int(irisRadius) - 2
-	irisRange := irisMaxX - irisMinX
-	if irisRange < 1 {
-		irisRange = 1
-	}
-	irisCX := irisMinX + int(phase*float64(irisRange))
-
-	// Build the grid
-	grid := make([][]rune, gH)
-	for y := 0; y < gH; y++ {
-		grid[y] = make([]rune, gW)
-		for x := 0; x < gW; x++ {
-			grid[y][x] = ' '
+	// Determine the max width of trimmed content
+	maxContentW := 0
+	trimmed := make([]string, len(art))
+	for i, line := range art {
+		trimmed[i] = strings.TrimSpace(line)
+		if len(trimmed[i]) > maxContentW {
+			maxContentW = len(trimmed[i])
 		}
 	}
 
-	// Render the eye
-	for y := 0; y < gH; y++ {
-		for x := 0; x < gW; x++ {
-			ex := float64(x - eyeCX)
-			ey := float64(y - eyeCY)
-
-			// Check if inside the elliptical eye opening
-			insideEye := (ex*ex)/(eyeA*eyeA)+(ey*ey)/(eyeB*eyeB) <= 1.0
-			if !insideEye {
-				continue
-			}
-
-			// Distance from iris center
-			dx := float64(x - irisCX)
-			dy := float64(y - irisCY)
-			dist := math.Sqrt(dx*dx + dy*dy)
-
-			if dist <= 1.0 {
-				// Pupil
-				grid[y][x] = 'O'
-			} else if dist <= irisRadius {
-				// Iris gradient: map distance to density ramp
-				normalized := (dist - 1.0) / (irisRadius - 1.0)
-				idx := int(normalized * float64(len(irisRamp)-1))
-				if idx >= len(irisRamp) {
-					idx = len(irisRamp) - 1
-				}
-				if idx < 0 {
-					idx = 0
-				}
-				grid[y][x] = irisRamp[idx]
-			} else {
-				// Sclera
-				grid[y][x] = '.'
-			}
+	// Center each trimmed line within maxContentW (left-pad only)
+	for i, line := range trimmed {
+		if len(line) < maxContentW {
+			left := (maxContentW - len(line)) / 2
+			trimmed[i] = strings.Repeat(" ", left) + line
 		}
 	}
 
-	// --- Build output ---
 	var b strings.Builder
-	b.WriteString("\n")
 
-	pad := (width - gW) / 2
+	// Vertical centering: art + blank + tagline + hint
+	artLines := len(trimmed)
+	totalArtHeight := artLines + 3 // art + blank line + tagline + hint
+	topPad := (viewportHeight - totalArtHeight) / 2
+	if topPad < 0 {
+		topPad = 0
+	}
+	for i := 0; i < topPad; i++ {
+		b.WriteString("\n")
+	}
+
+	pad := (width - maxContentW) / 2
 	if pad < 0 {
 		pad = 0
 	}
 
-	for y := 0; y < gH; y++ {
-		line := string(grid[y])
+	for _, line := range trimmed {
 		b.WriteString(strings.Repeat(" ", pad))
 		b.WriteString(assistantContentStyle.Render(line) + "\n")
 	}
 
 	b.WriteString("\n")
 
-	// Tagline
+	// Tagline centered
 	tagPad := (width - len(flareTagline)) / 2
 	if tagPad < 0 {
 		tagPad = 0

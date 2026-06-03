@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -28,8 +27,6 @@ type editorFinishedMsg struct {
 	err  error
 }
 
-type logoAnimMsg struct{}
-
 type model struct {
 	ready      bool
 	viewport   viewport.Model
@@ -50,10 +47,8 @@ type model struct {
 	expandReasoning bool
 	expandTools     bool
 
-	// Startup logo state (eye animation)
-	showLogo        bool
-	pupilPhase      float64 // 0.0 (left) to 1.0 (right)
-	pupilDirection  int     // 1 = moving right, -1 = moving left
+	// Startup logo state (static, shown once)
+	showLogo bool
 
 	// Streaming state
 	loading       bool
@@ -82,25 +77,13 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 		header: HeaderData{
 			Model: ag.ModelName(),
 		},
-		spinner:        s,
-		showLogo:       true,
-		pupilPhase:     0.0,
-		pupilDirection: 1,
+		spinner:  s,
+		showLogo: true,
 	}
 }
 
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.logoTick())
-}
-
-func (m *model) logoTick() tea.Cmd {
-	if !m.showLogo {
-		return nil
-	}
-	// 24 FPS for smooth eye animation
-	return tea.Tick(time.Second/24, func(t time.Time) tea.Msg {
-		return logoAnimMsg{}
-	})
+	return m.spinner.Tick
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -136,24 +119,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
-
-	case logoAnimMsg:
-		if !m.showLogo {
-			return m, nil
-		}
-		// 144 frames for a full sweep (6 seconds at 24fps)
-		const sweepFrames = 144.0
-		step := 1.0 / sweepFrames
-		m.pupilPhase += step * float64(m.pupilDirection)
-		if m.pupilPhase >= 1.0 {
-			m.pupilPhase = 1.0
-			m.pupilDirection = -1
-		} else if m.pupilPhase <= 0.0 {
-			m.pupilPhase = 0.0
-			m.pupilDirection = 1
-		}
-		m.updateViewport()
-		return m, m.logoTick()
 
 	case streamResultMsg:
 		return m.handleStreamResult(msg.result)
@@ -674,6 +639,6 @@ func (m *model) editFile(path string) tea.Cmd {
 // --- rendering ---
 
 func (m *model) updateViewport() {
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.pupilPhase)
+	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
 	m.viewport.SetContent(content)
 }
