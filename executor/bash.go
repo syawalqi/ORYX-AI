@@ -17,6 +17,7 @@ type Result struct {
 	Duration  string `json:"duration"`
 }
 
+// Executor runs shell commands with timeout and output limits.
 type Executor struct {
 	timeout       time.Duration
 	maxOutputLines int
