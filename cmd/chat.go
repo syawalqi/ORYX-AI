@@ -1,5 +1,7 @@
 package cmd
 
+const defaultModel = defaultModel
+
 import (
 	"fmt"
 	"os"
