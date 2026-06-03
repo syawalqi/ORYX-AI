@@ -157,7 +157,7 @@ func (m *model) View() string {
 	cmdBar := RenderCmdBar(m.width)
 
 	// Wrap body in double-border sandbox
-	body = chatBorderStyle.Width(m.width).Render(body)
+	body = chatBorderStyle.Render(body)
 
 	// Input line
 	var inputLine string
