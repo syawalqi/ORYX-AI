@@ -1,0 +1,8 @@
+# Build configuration
+builds:
+  - binary: flare
+    main: .
+    goos:
+      - linux
+    goarch:
+      - amd64
