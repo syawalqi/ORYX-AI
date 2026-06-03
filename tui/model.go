@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -26,6 +27,8 @@ type editorFinishedMsg struct {
 	path string
 	err  error
 }
+
+type logoAnimMsg struct{}
 
 type model struct {
 	ready      bool
@@ -48,7 +51,8 @@ type model struct {
 	expandTools     bool
 
 	// Startup logo state
-	showLogo bool
+	showLogo  bool
+	logoFrame int
 
 	// Streaming state
 	loading       bool
@@ -83,7 +87,16 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 }
 
 func (m *model) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, m.logoTick())
+}
+
+func (m *model) logoTick() tea.Cmd {
+	if !m.showLogo {
+		return nil
+	}
+	return tea.Tick(700, func(t time.Time) tea.Msg {
+		return logoAnimMsg{}
+	})
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -112,7 +125,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
+		// Also advance spinner when logo is showing (background animation)
+		if !m.loading {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 		return m, nil
+
+	case logoAnimMsg:
+		if !m.showLogo {
+			return m, nil
+		}
+		m.logoFrame = (m.logoFrame + 1) % len(logoFrames)
+		m.updateViewport()
+		return m, m.logoTick()
 
 	case streamResultMsg:
 		return m.handleStreamResult(msg.result)
@@ -633,6 +660,6 @@ func (m *model) editFile(path string) tea.Cmd {
 // --- rendering ---
 
 func (m *model) updateViewport() {
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo)
+	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.logoFrame)
 	m.viewport.SetContent(content)
 }

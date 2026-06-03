@@ -15,12 +15,12 @@ type ChatMessage struct {
 // renderMessages renders all chat messages plus optional streaming content.
 // width is the available viewport width for the chat area.
 func renderMessages(messages []ChatMessage, streamContent, streamReasoning string,
-	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool) string {
+	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool, logoFrame int) string {
 
 	var b strings.Builder
 
 	if showLogo && len(messages) == 0 {
-		b.WriteString(renderLogo(width))
+		b.WriteString(renderLogo(width, logoFrame))
 		return b.String()
 	}
 
@@ -224,61 +224,95 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 
 // --- Startup logo ---
 
-var flareLogo = "" +
-	"     ██      ██\n" +
-	"    ████    ████\n" +
-	"   ██████  ██████\n" +
-	"   ██████████████\n" +
-	"    ████████████\n" +
-	"     ██████████\n" +
-	"      ████████\n" +
-	"       ██████\n" +
-	"        ████\n" +
-	"         ██\n" +
-	"\n" +
-	"   ______ _               _____  ______\n" +
-	"  |  ____| |        /\\   |  __ \\|  ____|\n" +
-	"  | |__  | |       /  \\  | |__) | |__\n" +
-	"  |  __| | |      / /\\ \\ |  _  /|  __|\n" +
-	"  | |    | |____ / ____ \\| | \\ \\| |____\n" +
-	"  |_|    |______/_/    \\_\\_|  \\_\\______|"
+var logoFrames = []string{
+	// Frame 0 — bars low
+	"" +
+		"  ╔═══════════════════════════╗\n" +
+		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
+		"  ║   ║ ░ ║ ║ ░ ║ ║ ░ ║      ║\n" +
+		"  ║   ║ ░ ║ ║ ░ ║ ║ ░ ║      ║\n" +
+		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
+		"  ║     │     │     │         ║\n" +
+		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
+		"  ║   ║  ████████████ ║       ║\n" +
+		"  ║   ╚═══════════════╝       ║\n" +
+		"  ║         🔥               ║\n" +
+		"  ╚═══════════════════════════╝",
+
+	// Frame 1 — bars mid
+	"" +
+		"  ╔═══════════════════════════╗\n" +
+		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
+		"  ║   ║ █ ║ ║ ░ ║ ║ █ ║      ║\n" +
+		"  ║   ║ █ ║ ║ ░ ║ ║ █ ║      ║\n" +
+		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
+		"  ║     │     │     │         ║\n" +
+		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
+		"  ║   ║  ██████████████║       ║\n" +
+		"  ║   ╚═══════════════╝       ║\n" +
+		"  ║         🔥🔥             ║\n" +
+		"  ╚═══════════════════════════╝",
+
+	// Frame 2 — bars high
+	"" +
+		"  ╔═══════════════════════════╗\n" +
+		"  ║   ╔═══╗ ╔═══╗ ╔═══╗      ║\n" +
+		"  ║   ║ █ ║ ║ █ ║ ║ █ ║      ║\n" +
+		"  ║   ║ █ ║ ║ █ ║ ║ █ ║      ║\n" +
+		"  ║   ╚═╤═╝ ╚═╤═╝ ╚═╤═╝      ║\n" +
+		"  ║     │     │     │         ║\n" +
+		"  ║   ╔═╧═════╧═════╧═╗       ║\n" +
+		"  ║   ║  ████████████ ║       ║\n" +
+		"  ║   ╚═══════════════╝       ║\n" +
+		"  ║        🔥🔥🔥🔥          ║\n" +
+		"  ╚═══════════════════════════╝",
+}
 
 var flareTagline = "Server Management AI Agent"
 
-func renderLogo(width int) string {
+func renderLogo(width int, frame int) string {
 	var b strings.Builder
 
-	logoLines := strings.Split(flareLogo, "\n")
-	tagPadding := (width - len(flareTagline)) / 2
-	if tagPadding < 0 {
-		tagPadding = 0
+	if frame < 0 || frame >= len(logoFrames) {
+		frame = 0
 	}
+	logo := logoFrames[frame]
+	logoLines := strings.Split(logo, "\n")
 
-	// Center vertically with padding
-	topPad := 3
+	// Center vertically
+	topPad := 2
 	for i := 0; i < topPad; i++ {
 		b.WriteString("\n")
 	}
 
-	// Render logo lines centered
+	// Render logo lines centered (using rune count for proper alignment)
 	for _, line := range logoLines {
-		trimmed := strings.TrimRight(line, " ")
-		pad := (width - len(trimmed)) / 2
+		runes := []rune(strings.TrimRight(line, " "))
+		contentWidth := len(runes)
+		pad := (width - contentWidth) / 2
 		if pad < 0 {
 			pad = 0
 		}
 		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(assistantContentStyle.Render(trimmed) + "\n")
+		b.WriteString(assistantContentStyle.Render(string(runes)) + "\n")
 	}
 
-	// Tagline centered
+	// Blank line
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat(" ", tagPadding))
+
+	// Tagline centered
+	tagRunes := []rune(flareTagline)
+	tagPad := (width - len(tagRunes)) / 2
+	if tagPad < 0 {
+		tagPad = 0
+	}
+	b.WriteString(strings.Repeat(" ", tagPad))
 	b.WriteString(dimmedStyle.Render(flareTagline) + "\n\n")
 
-	// Bottom hint
+	// Hint centered
 	hint := "Send a message to start."
-	hintPad := (width - len(hint)) / 2
+	hintRunes := []rune(hint)
+	hintPad := (width - len(hintRunes)) / 2
 	if hintPad < 0 {
 		hintPad = 0
 	}
