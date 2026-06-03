@@ -60,3 +60,4 @@ func (n *WebhookNotifier) SendRaw(title, body string) error {
 	}
 	return nil
 }
+

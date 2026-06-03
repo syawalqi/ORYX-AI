@@ -175,3 +175,4 @@ func AlertFromResults(results []CheckResult) []CheckResult {
 	}
 	return alerts
 }
+
