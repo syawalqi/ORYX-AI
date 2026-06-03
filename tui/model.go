@@ -47,6 +47,9 @@ type model struct {
 	expandReasoning bool
 	expandTools     bool
 
+	// Startup logo state
+	showLogo bool
+
 	// Streaming state
 	loading       bool
 	streamCh      <-chan agent.StreamResult
@@ -74,7 +77,8 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 		header: HeaderData{
 			Model: ag.ModelName(),
 		},
-		spinner: s,
+		spinner:  s,
+		showLogo: true,
 	}
 }
 
@@ -174,7 +178,8 @@ func (m *model) View() string {
 		}
 	} else {
 		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED")).Render("> ")
-		inputLine = prompt + m.input
+		cursor := dimmedStyle.Render("▎")
+		inputLine = prompt + m.input + cursor
 	}
 
 	footer := lipgloss.JoinVertical(lipgloss.Left, inputLine, cmdBar)
@@ -266,6 +271,7 @@ func (m *model) startStream(input string) tea.Cmd {
 	m.streamReasoning.Reset()
 	m.streamMsgs = nil
 	m.streamToolRun = false
+	m.showLogo = false // hide startup logo after first message
 
 	ctx := context.Background()
 	userMsg := llm.Message{Role: llm.RoleUser, Content: input}
@@ -627,6 +633,6 @@ func (m *model) editFile(path string) tea.Cmd {
 // --- rendering ---
 
 func (m *model) updateViewport() {
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools)
+	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo)
 	m.viewport.SetContent(content)
 }

@@ -15,9 +15,14 @@ type ChatMessage struct {
 // renderMessages renders all chat messages plus optional streaming content.
 // width is the available viewport width for the chat area.
 func renderMessages(messages []ChatMessage, streamContent, streamReasoning string,
-	streamMsgs []string, width int, expandReasoning, expandTools bool) string {
+	streamMsgs []string, width int, expandReasoning, expandTools bool, showLogo bool) string {
 
 	var b strings.Builder
+
+	if showLogo && len(messages) == 0 {
+		b.WriteString(renderLogo(width))
+		return b.String()
+	}
 
 	if len(messages) == 0 && streamContent == "" && streamReasoning == "" && len(streamMsgs) == 0 {
 		return dimmedStyle.Render("Send a message to start.\n")
@@ -214,5 +219,59 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 	}
 
 	b.WriteString(toolMsgStyle.Render("╚"+strings.Repeat("═", width-2)+"╝") + "\n")
+	return b.String()
+}
+
+// --- Startup logo ---
+
+var flareLogo = "______ _               _____  ______ \n" +
+	"|  ____| |        /\\   |  __ \\|  ____|\n" +
+	"| |__  | |       /  \\  | |__) | |__   \n" +
+	"|  __| | |      / /\\ \\ |  _  /|  __|  \n" +
+	"| |    | |____ / ____ \\| | \\ \\| |____ \n" +
+	"|_|    |______/_/    \\_\\_|  \\_\\______|"
+
+var flareTagline = "Server Management AI Agent"
+
+func renderLogo(width int) string {
+	var b strings.Builder
+
+	logoLines := strings.Split(flareLogo, "\n")
+	tagPadding := (width - len(flareTagline)) / 2
+	if tagPadding < 0 {
+		tagPadding = 0
+	}
+
+	// Center vertically with padding
+	topPad := 3
+	for i := 0; i < topPad; i++ {
+		b.WriteString("\n")
+	}
+
+	// Render logo lines centered
+	for _, line := range logoLines {
+		trimmed := strings.TrimRight(line, " ")
+		pad := (width - len(trimmed)) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(assistantContentStyle.Render(trimmed) + "\n")
+	}
+
+	// Tagline centered
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat(" ", tagPadding))
+	b.WriteString(dimmedStyle.Render(flareTagline) + "\n\n")
+
+	// Bottom hint
+	hint := "Send a message to start."
+	hintPad := (width - len(hint)) / 2
+	if hintPad < 0 {
+		hintPad = 0
+	}
+	b.WriteString(strings.Repeat(" ", hintPad))
+	b.WriteString(dimmedStyle.Render(hint) + "\n")
+
 	return b.String()
 }
