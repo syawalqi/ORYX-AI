@@ -28,6 +28,9 @@ type editorFinishedMsg struct {
 	err  error
 }
 
+// autoScanMsg triggers a background system scan shortly after TUI starts.
+type autoScanMsg struct{}
+
 type model struct {
 	ready    bool
 	viewport viewport.Model
@@ -108,7 +111,12 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 func (m *model) Init() tea.Cmd {
 	// Disable terminal flow control so Ctrl+S (sidebar toggle) isn't intercepted
 	exec.Command("stty", "-ixon").Run()
-	return m.spinner.Tick
+	return tea.Batch(
+		m.spinner.Tick,
+		tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+			return autoScanMsg{}
+		}),
+	)
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -147,6 +155,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
+		}
+		return m, nil
+
+	case autoScanMsg:
+		// Silent background scan — updates memory.md and sidebar without chat messages
+		exec := executor.New(30, 200, []string{})
+		if info, err := memory.Scan(context.Background(), exec); err == nil {
+			content := info.Render()
+			os.WriteFile(m.memoryPath, []byte(content), 0644)
+			m.sidebarData.UpdateFromScan(info)
+			m.updateViewport()
 		}
 		return m, nil
 
