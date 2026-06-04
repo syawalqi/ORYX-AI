@@ -189,11 +189,7 @@ func (m *model) View() string {
 	}
 
 	header := RenderHeader(m.header, m.width)
-	body := m.viewport.View()
 	cmdBar := RenderCmdBar(m.width)
-
-	// Wrap body in double-border sandbox
-	body = chatBorderStyle.Render(body)
 
 	// Input line
 	var inputLine string
@@ -214,31 +210,35 @@ func (m *model) View() string {
 		inputLine = prompt + m.input + cursor
 	}
 
-	// Command palette overlay
-	var paletteView string
-	if strings.HasPrefix(m.input, "/") && !m.loading {
-		paletteView = m.palette.Render(m.width)
-	}
+	// Build the content inside the border
+	chatContent := m.viewport.View()
 
-	// Sidebar
-	var sidebarView string
+	// Sidebar beside the chat content
+	var sideView string
 	if m.sidebarWidth > 0 && m.showSidebar {
 		m.sidebarData.MessageCount = len(m.messages)
-		sidebarView = m.sidebarData.Render(m.sidebarWidth)
+		sideView = m.sidebarData.Render(m.sidebarWidth)
 	}
+
+	// Combine chat + sidebar horizontally
+	innerContent := chatContent
+	if sideView != "" {
+		innerContent = lipgloss.JoinHorizontal(lipgloss.Top, chatContent, sideView)
+	}
+
+	// Palette overlay inside the border
+	if strings.HasPrefix(m.input, "/") && !m.loading {
+		paletteView := m.palette.Render(m.width - 4)
+		if paletteView != "" {
+			innerContent = lipgloss.JoinVertical(lipgloss.Left, innerContent, paletteView)
+		}
+	}
+
+	// Wrap everything in the double border
+	body := chatBorderStyle.Render(innerContent)
 
 	footer := lipgloss.JoinVertical(lipgloss.Left, inputLine, cmdBar)
-
-	// Main area: chat + sidebar side by side
-	mainArea := body
-	if sidebarView != "" {
-		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, body, sidebarView)
-	}
-
-	if paletteView != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, header, mainArea, paletteView, footer)
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, mainArea, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
 
 // --- key handling ---
