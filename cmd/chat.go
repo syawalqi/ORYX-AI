@@ -12,7 +12,7 @@ import (
 	"github.com/syawalqi/flare/tui"
 )
 
-func Chat(cfg *config.Config) error {
+func Chat(cfg *config.Config, buildVersion string) error {
 	prov := getProvider(cfg)
 	exec := executor.New(cfg.Executor.Timeout, cfg.Executor.MaxOutputLines, cfg.Executor.BlockedCommands)
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations)
@@ -38,6 +38,7 @@ func Chat(cfg *config.Config) error {
 		os.ExpandEnv("$HOME/.config/flare/config.yaml"),
 		memoryPath,
 		os.ExpandEnv("$HOME/.config/flare"),
+		buildVersion,
 	)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 

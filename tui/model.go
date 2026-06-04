@@ -2,9 +2,13 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -81,10 +85,13 @@ type model struct {
 
 	// Conversation history passed to LLM across messages
 	history []llm.Message
+
+	// Build version for self-update checks
+	version string
 }
 
 // NewModel creates the chat TUI model.
-func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir string) tea.Model {
+func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir, buildVersion string) tea.Model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
 	s.Spinner = spinner.Line
@@ -105,6 +112,7 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 		},
 		showSidebar: true,
 		showLogo:    true,
+		version:     buildVersion,
 	}
 }
 
@@ -192,6 +200,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Role: "assistant", Content: fmt.Sprintf("✏️ %s saved (%d bytes).\n```\n%s\n```", label, len(data), content),
 			})
 		}
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+
+	case updateResultMsg:
+		m.messages = append(m.messages, ChatMessage{
+			Role: "assistant", Content: msg.msg,
+		})
 		m.updateViewport()
 		m.viewport.GotoBottom()
 		return m, nil
@@ -852,11 +868,95 @@ func (m *model) editFile(path string) tea.Cmd {
 func (m *model) selfUpdate() tea.Cmd {
 	m.messages = append(m.messages, ChatMessage{
 		Role:    "assistant",
-		Content: "🔄 Flare self-update not yet implemented.\nSource at: github.com/syawalqi/flare",
+		Content: "🔄 Checking for updates...",
 	})
 	m.updateViewport()
-	m.viewport.GotoBottom()
-	return nil
+
+	return func() tea.Msg {
+		// Fetch latest release from GitHub
+		resp, err := http.Get("https://api.github.com/repos/syawalqi/flare/releases/latest")
+		if err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("update check failed: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("update check: GitHub returned %d", resp.StatusCode)}
+		}
+
+		var release struct {
+			TagName string `json:"tag_name"`
+			Assets  []struct {
+				Name               string `json:"name"`
+				BrowserDownloadURL string `json:"browser_download_url"`
+			} `json:"assets"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("update parse: %w", err)}
+		}
+
+		latest := release.TagName
+		current := m.version
+
+		if current == "dev" || current == latest {
+			msg := fmt.Sprintf("✓ FLARE is up to date (%s).", current)
+			return updateResultMsg{msg: msg}
+		}
+
+		// Find the right binary for this system
+		osName := runtime.GOOS
+		arch := runtime.GOARCH
+		assetName := fmt.Sprintf("flare-%s-%s", osName, arch)
+
+		var downloadURL string
+		for _, a := range release.Assets {
+			if a.Name == assetName {
+				downloadURL = a.BrowserDownloadURL
+				break
+			}
+		}
+
+		if downloadURL == "" {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("no binary for %s/%s", osName, arch)}
+		}
+
+		// Download new binary
+		resp, err = http.Get(downloadURL)
+		if err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("download failed: %w", err)}
+		}
+		defer resp.Body.Close()
+
+		newBin, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("read download: %w", err)}
+		}
+
+		// Find current binary path and replace it
+		selfPath, err := os.Executable()
+		if err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("cannot find self: %w", err)}
+		}
+
+		// Write to temp file first, then rename
+		tmpPath := selfPath + ".new"
+		if err := os.WriteFile(tmpPath, newBin, 0755); err != nil {
+			return editorFinishedMsg{path: "", err: fmt.Errorf("write temp: %w", err)}
+		}
+
+		if err := os.Rename(tmpPath, selfPath); err != nil {
+			os.Remove(tmpPath)
+			return editorFinishedMsg{path: "", err: fmt.Errorf("replace binary: %w", err)}
+		}
+
+		msg := fmt.Sprintf("✓ Updated FLARE %s → %s. Restart to use.", current, latest)
+		return updateResultMsg{msg: msg}
+	}
+}
+
+// updateResultMsg carries the result of a self-update check.
+type updateResultMsg struct {
+	msg string
 }
 
 // --- rendering ---

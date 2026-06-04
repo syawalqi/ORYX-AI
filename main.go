@@ -8,6 +8,9 @@ import (
 	"github.com/syawalqi/flare/config"
 )
 
+// Version is set at build time via -ldflags.
+var version = "dev"
+
 func main() {
 	cfg := loadConfig()
 	if len(os.Args) < 2 {
@@ -51,7 +54,7 @@ func main() {
 }
 
 func runChat(cfg *config.Config) {
-	if err := cmd.Chat(cfg); err != nil {
+	if err := cmd.Chat(cfg, version); err != nil {
 		fmt.Fprintf(os.Stderr, "chat error: %v\n", err)
 		os.Exit(1)
 	}
