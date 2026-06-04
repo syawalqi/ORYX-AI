@@ -103,6 +103,8 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 }
 
 func (m *model) Init() tea.Cmd {
+	// Disable terminal flow control so Ctrl+S (sidebar toggle) isn't intercepted
+	exec.Command("stty", "-ixon").Run()
 	return m.spinner.Tick
 }
 
@@ -111,19 +113,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		innerW := msg.Width - 4 // 2 for border, 2 for padding
-
-		// Calculate sidebar width
-		sideW := 28
-		if msg.Width < 100 || !m.showSidebar {
-			sideW = 0
-		}
-		chatW := innerW - sideW
+		chatW := msg.Width - 4 // 2 for border, 2 for padding
 		if chatW < 40 {
 			chatW = 40
-			sideW = 0
 		}
-		m.sidebarWidth = sideW
+		m.sidebarWidth = 28 // always allocate for header display
 
 		if !m.ready {
 			m.viewport = viewport.New(chatW, msg.Height-5)
@@ -254,33 +248,28 @@ func (m *model) View() string {
 	// Build the content inside the border
 	chatContent := m.viewport.View()
 
-	// Sidebar beside the chat content, full height
-	var sideView string
-	if m.sidebarWidth > 0 && m.showSidebar {
+	// Update header with sidebar data when visible
+	if m.showSidebar {
 		m.sidebarData.MessageCount = len(m.messages)
-		sideView = m.sidebarData.Render(m.sidebarWidth, m.viewport.Height)
-	}
-
-	// Combine chat + sidebar horizontally
-	innerContent := chatContent
-	if sideView != "" {
-		innerContent = lipgloss.JoinHorizontal(lipgloss.Top, chatContent, sideView)
+		m.header.ServerInfo = m.sidebarData.CompactString()
+	} else {
+		m.header.ServerInfo = ""
 	}
 
 	// Palette overlay inside the border
 	if strings.HasPrefix(m.input, "/") && !m.loading {
 		paletteView := m.palette.Render(m.width - 4)
 		if paletteView != "" {
-			innerContent = lipgloss.JoinVertical(lipgloss.Left, innerContent, paletteView)
+			chatContent = lipgloss.JoinVertical(lipgloss.Left, chatContent, paletteView)
 		}
 	}
 
-	// Wrap everything in the double border
+	// Wrap in the double border
 	bs := chatBorderStyle
 	if m.planMode {
 		bs = planBorderStyle
 	}
-	body := bs.Render(innerContent)
+	body := bs.Render(chatContent)
 
 	footer := lipgloss.JoinVertical(lipgloss.Left, inputLine, cmdBar)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -377,6 +366,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Typed character
 	if len(key) == 1 {
 		m.input += key
+		// Initialize palette immediately when "/" is first typed
+		if m.input == "/" {
+			m.palette.Filter("")
+		}
 	}
 
 	return m, nil
@@ -679,7 +672,7 @@ func (m *model) handleCommand(input string) tea.Cmd {
 }
 
 func (m *model) showConfig() tea.Cmd {
-	data, err := os.ReadFile(m.configPath)
+	cfg, err := config.Load(m.configPath)
 	if err != nil {
 		m.messages = append(m.messages, ChatMessage{
 			Role: "error", Content: fmt.Sprintf("read config: %v", err),
@@ -687,22 +680,15 @@ func (m *model) showConfig() tea.Cmd {
 		m.updateViewport()
 		return nil
 	}
-
-	// Mask the API key
-	content := string(data)
-	cfg, err := config.Load(m.configPath)
-	if err == nil && cfg.APIKey != "" {
-		masked := cfg.APIKey
-		if len(masked) > 8 {
-			masked = masked[:4] + "…" + masked[len(masked)-4:]
-		} else {
-			masked = "***"
-		}
-		content = strings.Replace(content, cfg.APIKey, masked, 1)
+	masked := cfg.APIKey
+	if len(masked) > 8 {
+		masked = masked[:4] + "…" + masked[len(masked)-4:]
+	} else if masked != "" {
+		masked = "***"
 	}
-
 	m.messages = append(m.messages, ChatMessage{
-		Role: "assistant", Content: "📋 Config:\n```\n" + content + "\n```",
+		Role: "assistant",
+		Content: fmt.Sprintf("📋 Config summary:\n  Provider: %s\n  Model: %s\n  API Key: %s\n  Max iterations: %d\n\nEdit with `/config edit` to change values.", cfg.Provider, cfg.Model, masked, cfg.Agent.MaxIterations),
 	})
 	m.updateViewport()
 	m.viewport.GotoBottom()
@@ -719,13 +705,11 @@ func (m *model) showMemory() tea.Cmd {
 		return nil
 	}
 
-	content := string(data)
-	if len(content) > 2000 {
-		content = content[:2000] + "\n... (truncated)"
-	}
+	size := len(data)
 
 	m.messages = append(m.messages, ChatMessage{
-		Role: "assistant", Content: "🧠 Server Memory:\n```\n" + content + "\n```",
+		Role: "assistant",
+		Content: fmt.Sprintf("🧠 Server memory: %d bytes\nEdit with `/memory edit` to update server context.", size),
 	})
 	m.updateViewport()
 	m.viewport.GotoBottom()
@@ -734,11 +718,13 @@ func (m *model) showMemory() tea.Cmd {
 
 func (m *model) changeModel(parts []string) tea.Cmd {
 	if len(parts) < 2 {
+		// Show current model
 		m.messages = append(m.messages, ChatMessage{
-			Role:    "error",
-			Content: "Usage: /model <model-id>\nExample: /model deepseek/deepseek-v4-flash",
+			Role:    "assistant",
+			Content: fmt.Sprintf("🤖 Current model: **%s**\nUsage: `/model <model-id>`\nExample: `/model deepseek/deepseek-v4-flash`", m.agent.ModelName()),
 		})
 		m.updateViewport()
+		m.viewport.GotoBottom()
 		return nil
 	}
 
@@ -858,17 +844,11 @@ func (m *model) updateViewport() {
 }
 
 func (m *model) reflowViewport() {
-	innerW := m.width - 4
-	sideW := 28
-	if m.width < 100 || !m.showSidebar {
-		sideW = 0
-	}
-	chatW := innerW - sideW
+	chatW := m.width - 4
 	if chatW < 40 {
 		chatW = 40
-		sideW = 0
 	}
-	m.sidebarWidth = sideW
+	m.sidebarWidth = 28
 	m.viewport.Width = chatW
 	m.viewport.Height = m.height - 5
 	m.updateViewport()

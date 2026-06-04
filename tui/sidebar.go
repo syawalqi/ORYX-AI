@@ -42,9 +42,9 @@ func (s *SidebarData) UpdateFromScan(info *memory.SystemInfo) {
 	s.LastScan = info.ScanTime
 }
 
-// Render builds the sidebar string for the given width, padded to fullHeight.
+// Render builds the unbordered sidebar string for the given width, padded to fullHeight.
 func (s *SidebarData) Render(width int, fullHeight int) string {
-	innerW := width - 4 // padding + border
+	innerW := width - 2 // minimal padding on each side
 
 	// ── SERVER SECTION ──
 	var serverLines []string
@@ -103,19 +103,106 @@ func (s *SidebarData) Render(width int, fullHeight int) string {
 
 	// Count content lines and pad to viewport height
 	contentLines := strings.Count(content, "\n") + 1
-	padLines := fullHeight - contentLines - 2 // 2 for top/bottom border
+	padLines := fullHeight - contentLines
 	if padLines > 0 {
 		content += strings.Repeat("\n", padLines)
 	}
 
-	// Border style for the sidebar panel
-	panelStyle := lipgloss.NewStyle().
-		Border(lipgloss.DoubleBorder()).
-		BorderForeground(lipgloss.Color("#7C3AED")).
-		Padding(0, 1).
-		Width(width)
+	// Return unbordered content constrained to exact width
+	return lipgloss.NewStyle().Width(width).Render(content)
+}
 
-	return panelStyle.Render(content)
+// CompactString returns a one-line summary of server status for the header bar.
+// Empty string if no scan data is available.
+func (s *SidebarData) CompactString() string {
+	if !s.HasScanData {
+		return ""
+	}
+	parts := []string{}
+	if s.Hostname != "" {
+		parts = append(parts, "│ HOST:"+s.Hostname)
+	}
+	if s.Uptime != "" {
+		// Trim uptime to first comma for compactness
+		up := s.Uptime
+		if idx := strings.Index(up, ","); idx > 0 {
+			up = up[:idx]
+		}
+		parts = append(parts, "UP:"+up)
+	}
+	if s.CPULoad != "" {
+		// Just the 1-minute load
+		load := s.CPULoad
+		if idx := strings.Index(load, " "); idx > 0 {
+			load = load[:idx]
+		}
+		parts = append(parts, "CPU:"+load)
+	}
+	if s.MemoryUsed != "" && s.MemoryTotal != "" {
+		bar := compactMemBar(s.MemoryUsed, s.MemoryTotal, 6)
+		pct := compactMemPct(s.MemoryUsed, s.MemoryTotal)
+		parts = append(parts, "RAM:"+bar+" "+pct+"%")
+	}
+	if s.DiskUsedPct != "" {
+		bar := compactBar(s.DiskUsedPct, 6)
+		parts = append(parts, "DISK:"+bar+" "+s.DiskUsedPct+"%")
+	}
+	return strings.Join(parts, " ")
+}
+
+// compactBar returns an inline progress bar like "█████░░░" for a percentage string.
+func compactBar(pct string, barLen int) string {
+	percent := 0
+	fmt.Sscanf(pct, "%d", &percent)
+	return compactBarInt(percent, barLen)
+}
+
+// compactMemBar returns an inline progress bar for memory from used/total strings like "2.4G"/"3.7G".
+func compactMemBar(used, total string, barLen int) string {
+	usedGB := parseSizeVal(used)
+	totalGB := parseSizeVal(total)
+	if totalGB <= 0 {
+		return used + "/" + total
+	}
+	pct := int(usedGB / totalGB * 100)
+	return compactBarInt(pct, barLen)
+}
+
+func compactMemPct(used, total string) string {
+	usedGB := parseSizeVal(used)
+	totalGB := parseSizeVal(total)
+	if totalGB <= 0 {
+		return "?"
+	}
+	return fmt.Sprintf("%d", int(usedGB/totalGB*100))
+}
+
+func compactBarInt(percent, barLen int) string {
+	filled := percent * barLen / 100
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > barLen {
+		filled = barLen
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", barLen-filled)
+}
+
+// parseSizeVal converts a human-readable size like "2.4G" or "512M" to GiB as a float64.
+func parseSizeVal(s string) float64 {
+	s = strings.ToUpper(s)
+	var val float64
+	fmt.Sscanf(s, "%f", &val)
+	if strings.Contains(s, "T") {
+		return val * 1024
+	}
+	if strings.Contains(s, "M") {
+		return val / 1024
+	}
+	if strings.Contains(s, "K") {
+		return val / (1024 * 1024)
+	}
+	return val // assume GiB or dimensionless
 }
 
 // ─── helpers ────────────────────────────────────────────

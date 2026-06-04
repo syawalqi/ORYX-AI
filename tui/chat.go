@@ -50,10 +50,10 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 	for _, msg := range messages {
 		switch msg.Role {
 		case "user":
-			b.WriteString(renderUserBox(msg.Content, width))
+			b.WriteString(renderUserBox(wrapText(msg.Content, width-2), width))
 		case "assistant":
 			b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
-			b.WriteString(assistantContentStyle.Render(msg.Content) + "\n")
+			b.WriteString(assistantContentStyle.Render(wrapText(msg.Content, width)) + "\n")
 			if msg.Reasoning != "" {
 				b.WriteString(renderReasoningBlock(msg.Reasoning, width, expandReasoning))
 			}
@@ -81,7 +81,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 	// During streaming — content
 	if streamContent != "" {
 		b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
-		b.WriteString(assistantContentStyle.Render(streamContent))
+		b.WriteString(assistantContentStyle.Render(wrapText(streamContent, width)))
 	}
 
 	return b.String()
@@ -325,4 +325,39 @@ func renderEye(width int, viewportHeight int) string {
 	b.WriteString(strings.Repeat(" ", hintPad) + dimmedStyle.Render(hint) + "\n")
 
 	return b.String()
+}
+
+// wrapText splits long lines at word boundaries so they don't overflow the viewport.
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	var b strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		runes := []rune(line)
+		for len(runes) > 0 {
+			// If the remaining text fits, write it as-is
+			if len(runes) <= width {
+				b.WriteString(string(runes))
+				break
+			}
+			// Try to break at a space within the width
+			breakAt := width
+			for i := width; i > 0; i-- {
+				if runes[i] == ' ' {
+					breakAt = i
+					break
+				}
+			}
+			// If no space found, break at width (covers very long words)
+			b.WriteString(string(runes[:breakAt]))
+			b.WriteByte('\n')
+			// Skip the space if we broke at one
+			if breakAt < len(runes) && runes[breakAt] == ' ' {
+				breakAt++
+			}
+			runes = runes[breakAt:]
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

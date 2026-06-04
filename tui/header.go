@@ -12,6 +12,7 @@ type HeaderData struct {
 	Alerts     int
 	DaemonRunning bool
 	PlanMode   bool
+	ServerInfo string // compact server stats shown when sidebar is toggled
 }
 
 func RenderHeader(data HeaderData, width int) string {
@@ -24,6 +25,11 @@ func RenderHeader(data HeaderData, width int) string {
 
 	left := hs.Render(" Flare ") +
 		ms.Render(fmt.Sprintf("[%s]", data.Model))
+
+	// Server info in dimmed style between model and health indicator
+	if data.ServerInfo != "" {
+		left += dimmedStyle.Render(" " + data.ServerInfo)
+	}
 
 	var right string
 	if data.PlanMode {
@@ -39,6 +45,9 @@ func RenderHeader(data HeaderData, width int) string {
 		right = dimmedStyle.Render("● healthy")
 	}
 
-	filler := strings.Repeat(" ", width-lipgloss.Width(left)-lipgloss.Width(right))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, filler, right)
+	filler := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if filler < 0 {
+		filler = 0
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", filler), right)
 }
