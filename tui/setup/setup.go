@@ -239,93 +239,151 @@ func (m *model) View() string {
 		body = m.renderConfirm()
 	}
 
+	// Footer with keyboard hints
+	footer := m.renderFooter()
+
 	return docStyle.Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			m.renderProgress(),
-			"",
-			body,
+		borderStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				renderLogo(),
+				m.renderProgress(),
+				"",
+				body,
+				footer,
+			),
 		),
 	)
+}
+
+// renderLogo returns the FLARE ASCII eye.
+func renderLogo() string {
+	eye := `    ▄▄▄▄▄▄▄▄▄
+   ██       ██
+  ██  █ █ █  ██
+   ██       ██
+    ▀▀▀▀▀▀▀▀▀`
+	return logoStyle.Render(eye) + "\n" + titleStyle.Render("⚡ Flare Setup")
+}
+
+// renderFooter shows keyboard shortcuts for the current step.
+func (m *model) renderFooter() string {
+	switch m.step {
+	case stepProvider:
+		return footerStyle.Render("↑ ↓ navigate • Enter select • Esc quit")
+	case stepCustomURL:
+		return footerStyle.Render("Enter confirm • Esc go back")
+	case stepAPIKey:
+		return footerStyle.Render("Enter test connection • Esc go back")
+	case stepTesting:
+		if m.testing {
+			return footerStyle.Render("Testing...")
+		}
+		if m.testErr != nil {
+			return footerStyle.Render("Enter retry • Esc go back")
+		}
+		return footerStyle.Render("Enter continue • Esc go back")
+	case stepModel:
+		if m.modelList.Items() != nil && len(m.modelList.Items()) > 0 {
+			return footerStyle.Render("↑ ↓ navigate • / filter • Enter select")
+		}
+		return footerStyle.Render("Type model ID • Enter confirm • Esc go back")
+	case stepConfirm:
+		return footerStyle.Render("Enter save configuration • Esc go back")
+	}
+	return footerStyle.Render("Ctrl+C quit")
 }
 
 // --- progress bar ---
 
 func (m *model) renderProgress() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("⚡ Flare Setup"))
-	b.WriteString("\n")
-
 	total := int(stepConfirm) + 1
+	var steps []string
 	for i := 0; i < total; i++ {
 		s := step(i)
 		title := stepTitles[s]
 		if i == int(m.step) {
-			b.WriteString(activeStepStyle.Render(fmt.Sprintf(" ● %s ", title)))
+			steps = append(steps, activeStepStyle.Render(fmt.Sprintf(" ● %s ", title)))
 		} else if i < int(m.step) {
-			b.WriteString(successStyle.Render(fmt.Sprintf(" ✓ %s ", title)))
+			steps = append(steps, successStepStyle.Render(fmt.Sprintf(" ✓ %s ", title)))
 		} else {
-			b.WriteString(stepStyle.Render(fmt.Sprintf(" ○ %s ", title)))
-		}
-		if i < total-1 {
-			b.WriteString(stepStyle.Render(" → "))
+			steps = append(steps, stepStyle.Render(fmt.Sprintf(" ○ %s ", title)))
 		}
 	}
-	return b.String()
+
+	// Center the step bar
+	bar := strings.Join(steps, stepStyle.Render(" → "))
+	return lipgloss.NewStyle().Width(66).Align(lipgloss.Center).Render(bar)
 }
 
 // --- step renderers ---
 
 func (m *model) renderProvider() string {
-	return m.providerList.View()
+	return contentStyle.Render(m.providerList.View())
 }
 
 func (m *model) renderCustomURL() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
-		labelStyle.Render("Enter the API base URL:"),
-		m.urlInput.View(),
-		infoStyle.Render("\n↑ Enter to confirm • Esc to go back"),
+	return contentStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			labelStyle.Render("Enter the API base URL:"),
+			"",
+			m.urlInput.View(),
+		),
 	)
 }
 
 func (m *model) renderAPIKey() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
-		labelStyle.Render("Enter your API key:"),
-		m.keyInput.View(),
-		infoStyle.Render("\n↑ Key is masked for security • Enter to test • Esc to go back"),
+	return contentStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			labelStyle.Render("Enter your API key:"),
+			"",
+			m.keyInput.View(),
+		),
 	)
 }
 
 func (m *model) renderTesting() string {
 	if m.testing {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.spn.View()+" Testing connection and fetching models...",
-			infoStyle.Render("\nThis may take a few seconds."),
+		return contentStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				lipgloss.NewStyle().Foreground(primary).Render(m.spn.View()+" Testing connection..."),
+				"",
+				infoStyle.Render("Fetching available models..."),
+			),
 		)
 	}
 	if m.testErr != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			errorStyle.Render("✗ Connection failed:"),
-			errorStyle.Render(m.testErr.Error()),
-			"",
-			stepStyle.Render("Press Enter to retry or Esc to go back."),
+		// Show error in a red-bordered box with retry option
+		return errorBoxStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				errorStyle.Render("✗ Connection failed:"),
+				"",
+				infoStyle.Render(m.testErr.Error()),
+			),
 		)
 	}
-	return successStyle.Render("✓ Connection OK!")
+	return contentStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			successStyle.Render("✓ Connection OK!"),
+			"",
+			infoStyle.Render(fmt.Sprintf("%d models available", len(m.models))),
+		),
+	)
 }
 
 func (m *model) renderModel() string {
 	if m.modelList.Items() == nil || len(m.modelList.Items()) == 0 {
 		// No models from API — show a manual entry prompt
-		return lipgloss.JoinVertical(lipgloss.Left,
-			infoStyle.Render("Provider didn't return a model list."),
-			infoStyle.Render("Type your model ID manually and press Enter."),
-			"",
-			labelStyle.Render("Model ID:"),
-			m.keyInput.View(), // reuse key input widget for model name
-			infoStyle.Render("\n↑ Example: deepseek/deepseek-v4-flash • Enter to confirm"),
+		return contentStyle.Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				infoStyle.Render("Provider didn't return a model list."),
+				infoStyle.Render("Type your model ID manually:"),
+				"",
+				labelStyle.Render("Model ID:"),
+				m.keyInput.View(),
+			),
 		)
 	}
-	return m.modelList.View()
+	return contentStyle.Render(m.modelList.View())
 }
 
 func (m *model) renderConfirm() string {
@@ -343,17 +401,18 @@ func (m *model) renderConfirm() string {
 	}
 
 	sections := lipgloss.JoinVertical(lipgloss.Left,
-		labelStyle.Render("Provider:  ")+valueStyle.Render(provName),
-		labelStyle.Render("Base URL:  ")+valueStyle.Render(m.baseURL),
-		labelStyle.Render("Model:     ")+valueStyle.Render(m.modelID),
-		labelStyle.Render("API Key:   ")+keySummaryStyle.Render(keyDisplay),
+		labelStyle.Render("Provider:")+"  "+valueStyle.Render(provName),
+		labelStyle.Render("Base URL:")+"  "+valueStyle.Render(m.baseURL),
+		labelStyle.Render("Model:   ")+"  "+valueStyle.Render(m.modelID),
+		labelStyle.Render("API Key:")+"   "+keySummaryStyle.Render(keyDisplay),
 	)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		confirmStyle.Render(sections),
-		"",
-		successStyle.Render("✓ Press Enter to save"),
-		stepStyle.Render("Esc to go back and change"),
+	return confirmStyle.Render(
+		lipgloss.JoinVertical(lipgloss.Left,
+			successStyle.Render("✓ Configuration Summary"),
+			"",
+			sections,
+		),
 	)
 }
 

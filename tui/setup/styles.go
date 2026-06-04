@@ -10,23 +10,51 @@ var (
 	danger    = lipgloss.Color("#EF4444") // red
 	muted     = lipgloss.Color("#6B7280") // gray
 	highlight = lipgloss.Color("#F59E0B") // amber
+	dim       = lipgloss.Color("#374151") // dark gray for borders
 
-	// Layout
+	// Layout — main container with double border matching chat TUI
 	docStyle = lipgloss.NewStyle().
 			Padding(1, 2)
+
+	// Outer border box
+	borderStyle = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(primary).
+			Padding(1, 2).
+			Width(70)
+
+	// Logo style — the FLARE ASCII eye (small version)
+	logoStyle = lipgloss.NewStyle().
+			Foreground(primary).
+			Bold(true).
+			Align(lipgloss.Center).
+			Width(66)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(primary).
-			MarginBottom(1)
+			Align(lipgloss.Center).
+			Width(66)
 
+	// Progress step styles
 	stepStyle = lipgloss.NewStyle().
 			Foreground(muted).
 			MarginBottom(1)
 
 	activeStepStyle = lipgloss.NewStyle().
-				Foreground(primary).
+			Foreground(primary).
+			Bold(true)
+
+	successStepStyle = lipgloss.NewStyle().
+				Foreground(success).
 				Bold(true)
+
+	// Content area box
+	contentStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(dim).
+			Padding(1, 2).
+			Width(64)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(danger).
@@ -56,5 +84,19 @@ var (
 			MarginTop(1).
 			Padding(1, 2).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(primary)
+			BorderForeground(success)
+
+	// Footer with keyboard hints
+	footerStyle = lipgloss.NewStyle().
+			Foreground(dim).
+			Align(lipgloss.Center).
+			Width(66).
+			MarginTop(1)
+
+	// Error state box
+	errorBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(danger).
+			Padding(1, 2).
+			Width(64)
 )

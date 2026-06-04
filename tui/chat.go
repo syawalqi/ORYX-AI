@@ -57,7 +57,10 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 			b.WriteString(renderUserBox(wrapText(msg.Content, width-2), width))
 		case "assistant":
 			b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
-			b.WriteString(assistantContentStyle.Render(wrapText(msg.Content, width)) + "\n")
+			rendered := renderMarkdown(msg.Content, width)
+			if rendered != "" {
+				b.WriteString(rendered + "\n")
+			}
 			if msg.Reasoning != "" {
 				b.WriteString(renderReasoningBlock(msg.Reasoning, width, expandReasoning, false))
 			}
@@ -85,7 +88,10 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 	// During streaming — content
 	if streamContent != "" {
 		b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
-		b.WriteString(assistantContentStyle.Render(wrapText(streamContent, width)))
+		rendered := renderMarkdown(streamContent, width)
+		if rendered != "" {
+			b.WriteString(rendered)
+		}
 	}
 
 	return b.String()

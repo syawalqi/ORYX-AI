@@ -189,27 +189,35 @@ Your task is to diagnose and fix a server anomaly.
 	b.WriteString(systemState)
 	b.WriteString("\n")
 
-	b.WriteString(`## Tools Available
-- run_command: Execute shell commands
-- read_file: Read file contents
-- write_file: Write to files (for config changes)
-- service_action: Start/stop/restart systemd services
-- search_logs: Search journald logs
+	b.WriteString("## Tools Available\n")
+	b.WriteString("- run_command: Execute shell commands\n")
+	b.WriteString("- read_file: Read file contents\n")
+	b.WriteString("- write_file: Write to files (for config changes)\n")
+	b.WriteString("- service_action: Start/stop/restart systemd services\n")
+	b.WriteString("- search_logs: Search journald logs\n")
+	b.WriteString("\n")
+	b.WriteString("\n")
 
-## Rules
-1. Diagnose the root cause before attempting a fix
-2. After each fix attempt, verify by running the relevant check
-3. If a fix fails, try a different approach
-4. NEVER run: rm -rf, mkfs, dd, or format commands
-5. NEVER install new packages without explicit permission
-6. You have no user to ask — act autonomously within these rules
-7. If you're stuck, explain what you've tried
+	b.WriteString("## Rules\n")
+	b.WriteString("1. Diagnose the root cause before attempting a fix\n")
+	b.WriteString("2. After each fix attempt, verify by running the relevant check\n")
+	b.WriteString("3. If a fix fails, try a different approach\n")
+	b.WriteString("4. NEVER run: rm -rf, mkfs, dd, or format commands\n")
+	b.WriteString("5. NEVER install new packages without explicit permission\n")
+	b.WriteString("6. You have no user to ask - act autonomously within these rules\n")
+	b.WriteString("7. If you're stuck, explain what you've tried\n")
+	b.WriteString("\n")
 
-## Fix Strategy
-1. First: diagnose (check logs, disk usage, process state)
-2. Then: apply the fix (clean up, restart, reconfigure)
-3. Finally: verify (re-run the check that flagged the anomaly)
-`)
+	b.WriteString("## Output Format\n")
+	b.WriteString("- Respond in PLAIN TEXT only. No Markdown, no formatting, no bold, no tables.\n")
+	b.WriteString("- For commands or code, put them on their own line prefixed with $.\n")
+	b.WriteString("- Keep responses concise and technical.\n")
+	b.WriteString("\n")
+
+	b.WriteString("## Fix Strategy\n")
+	b.WriteString("1. First: diagnose (check logs, disk usage, process state)\n")
+	b.WriteString("2. Then: apply the fix (clean up, restart, reconfigure)\n")
+	b.WriteString("3. Finally: verify (re-run the check that flagged the anomaly)\n")
 
 	return b.String()
 }

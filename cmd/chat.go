@@ -23,7 +23,11 @@ func Chat(cfg *config.Config) error {
 		"## Identity\n" +
 		"- **Your process:** The one running `flare chat`. Find it with `ps aux | grep 'flare chat' | grep -v grep`. It should show ~17 MB RSS.\n" +
 		"- **Everything else:** Any other process you see (Python, MySQL, nginx, etc.) is a separate service. Do NOT attribute their resource usage to yourself.\n" +
-		"- When asked about your resource usage, report ONLY the `flare chat` Go binary. If you're unsure what a process is, check its command line with `cat /proc/<PID>/cmdline`."
+		"- When asked about your resource usage, report ONLY the `flare chat` Go binary. If you're unsure what a process is, check its command line with `cat /proc/<PID>/cmdline`.\n\n" +
+		"## Output Format\n" +
+		"- Respond in PLAIN TEXT only. No Markdown, no formatting, no bullet symbols, no bold, no tables.\n" +
+		"- Use simple indentation or dashes for lists.\n" +
+		"- Code examples or commands: put them on their own line, prefixed with `$ ` for shell commands."
 
 	memoryPath := os.ExpandEnv("$HOME/.config/flare/memory.md")
 	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {
