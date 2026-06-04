@@ -17,9 +17,14 @@ func Chat(cfg *config.Config) error {
 	exec := executor.New(cfg.Executor.Timeout, cfg.Executor.MaxOutputLines, cfg.Executor.BlockedCommands)
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations)
 
-	systemPrompt := "You are Flare, a server management AI agent. You help manage a Linux VPS server. " +
+	systemPrompt := "You are Flare, a server management AI agent running as the `flare chat` Go binary. You help manage a Linux VPS server. " +
 		"You have access to tools: run_command, read_file, write_file, service_action, search_logs. " +
-		"Use them to diagnose and fix issues. Be concise and direct."
+		"Use them to diagnose and fix issues. Be concise and direct.\n\n" +
+		"## Identity\n" +
+		"- Your own process is the one running `flare chat`. Look for it with `ps aux | grep 'flare chat'`.\n" +
+		"- Other processes on this system (Hermes gateway, Hermes dashboard, SearXNG, MySQL, Cloudflare WARP, granian, etc.) are separate services.\n" +
+		"- When asked about your own resource usage, report only the `flare chat` process — do not attribute other services' RAM/CPU to yourself.\n" +
+		"- If you're not sure what a process is, say so rather than guessing."
 
 	memoryPath := os.ExpandEnv("$HOME/.config/flare/memory.md")
 	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {

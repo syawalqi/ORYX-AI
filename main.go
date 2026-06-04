@@ -10,7 +10,13 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		usage()
+		// Default to chat when invoked as just "flare"
+		cfg := config.Default()
+		configPath := os.ExpandEnv("$HOME/.config/flare/config.yaml")
+		if parsed, err := config.Load(configPath); err == nil {
+			cfg = parsed
+		}
+		runChat(cfg)
 		return
 	}
 
@@ -32,10 +38,7 @@ func main() {
 
 	switch subcommand {
 	case "chat":
-		if err := cmd.Chat(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "chat error: %v\n", err)
-			os.Exit(1)
-		}
+		runChat(cfg)
 	case "setup":
 		if err := cmd.Setup(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "setup error: %v\n", err)
@@ -56,6 +59,13 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcommand)
 		usage()
+		os.Exit(1)
+	}
+}
+
+func runChat(cfg *config.Config) {
+	if err := cmd.Chat(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "chat error: %v\n", err)
 		os.Exit(1)
 	}
 }
