@@ -75,6 +75,9 @@ type model struct {
 
 	// Plan mode — read-only analysis mode with green theme
 	planMode bool
+
+	// Conversation history passed to LLM across messages
+	history []llm.Message
 }
 
 // NewModel creates the chat TUI model.
@@ -388,8 +391,13 @@ func (m *model) startStream(input string) tea.Cmd {
 	ctx := context.Background()
 	userMsg := llm.Message{Role: llm.RoleUser, Content: input}
 
-	// Add user message to display
+	// Add to display and LLM history
 	m.messages = append(m.messages, ChatMessage{Role: "user", Content: input})
+	m.history = append(m.history, userMsg)
+
+	// Pass accumulated history so LLM sees full conversation across turns
+	msgs := make([]llm.Message, len(m.history))
+	copy(msgs, m.history)
 
 	// Start streaming in background
 	prompt := m.systemPrompt
@@ -398,7 +406,7 @@ func (m *model) startStream(input string) tea.Cmd {
 			"You CANNOT run commands, write files, or modify services. " +
 			"Do NOT attempt destructive actions — they will be blocked. Analyze and suggest changes only."
 	}
-	ch, err := m.agent.RunStream(ctx, prompt, []llm.Message{userMsg})
+	ch, err := m.agent.RunStream(ctx, prompt, msgs)
 	if err != nil {
 		m.loading = false
 		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("stream error: %v", err)})
@@ -506,6 +514,8 @@ func (m *model) finalizeStream() {
 		m.messages = append(m.messages, ChatMessage{
 			Role: "assistant", Content: content, Reasoning: reasoning, ToolCalls: toolCalls,
 		})
+		// Accumulate in LLM history for conversation continuity
+		m.history = append(m.history, llm.Message{Role: llm.RoleAssistant, Content: content})
 	}
 	m.streamContent.Reset()
 	m.streamReasoning.Reset()
@@ -582,6 +592,7 @@ func (m *model) handleCommand(input string) tea.Cmd {
 
 	case "/clear":
 		m.messages = nil
+		m.history = nil
 		m.updateViewport()
 		return nil
 

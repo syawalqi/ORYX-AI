@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path"
 	"strings"
 
 	"github.com/syawalqi/flare/executor"
@@ -190,11 +192,16 @@ func (a *Agent) registerHandlers() {
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
-		result, err := a.exec.Run(ctx, fmt.Sprintf("head -500 %s", escapePath(p.Path)))
+		data, err := os.ReadFile(p.Path)
 		if err != nil {
 			return fmt.Sprintf("error: %v", err), nil
 		}
-		return result.Stdout, nil
+		// Limit to 500 lines to keep responses manageable
+		lines := strings.Split(string(data), "\n")
+		if len(lines) > 500 {
+			lines = lines[:500]
+		}
+		return strings.Join(lines, "\n"), nil
 	}
 
 	a.handlers["write_file"] = func(ctx context.Context, args json.RawMessage) (string, error) {
@@ -205,9 +212,11 @@ func (a *Agent) registerHandlers() {
 		if err := json.Unmarshal(args, &p); err != nil {
 			return "", fmt.Errorf("invalid args: %w", err)
 		}
-		escaped := strings.ReplaceAll(p.Content, `'`, `'\\''`)
-		_, err := a.exec.Run(ctx, fmt.Sprintf("mkdir -p $(dirname %s) && cat > %s << 'ENDOFFILE'\n%s\nENDOFFILE", escapePath(p.Path), escapePath(p.Path), escaped))
-		if err != nil {
+		dir := path.Dir(p.Path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Sprintf("error: %v", err), nil
+		}
+		if err := os.WriteFile(p.Path, []byte(p.Content), 0644); err != nil {
 			return fmt.Sprintf("error: %v", err), nil
 		}
 		return fmt.Sprintf("wrote %s (%d bytes)", p.Path, len(p.Content)), nil
@@ -262,10 +271,6 @@ func (a *Agent) registerHandlers() {
 	}
 }
 
-func escapePath(path string) string {
-	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
-}
-
 func (a *Agent) ModelName() string {
 	return a.model
 }
@@ -280,62 +285,6 @@ func (a *Agent) SetModel(model string) {
 // are blocked at the handler level — the LLM receives a clear error message.
 func (a *Agent) SetPlanMode(enabled bool) {
 	a.planMode = enabled
-}
-
-// Run does a blocking agent loop. Deprecated: use RunStream for streaming output.
-func (a *Agent) Run(ctx context.Context, systemPrompt string, messages []llm.Message) (*llm.ChatResponse, error) {
-	fullMsgs := make([]llm.Message, 0)
-	if systemPrompt != "" {
-		fullMsgs = append(fullMsgs, llm.Message{Role: llm.RoleSystem, Content: systemPrompt})
-	}
-	fullMsgs = append(fullMsgs, messages...)
-
-	for iter := 0; iter < a.maxIter; iter++ {
-		resp, err := a.provider.Chat(ctx, llm.ChatRequest{
-			Model:       a.model,
-			Messages:    fullMsgs,
-			Tools:       a.tools,
-			MaxTokens:   a.maxTokens,
-			Temperature: a.temperature,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("llm chat: %w", err)
-		}
-
-		if len(resp.ToolCalls) == 0 {
-			return resp, nil
-		}
-
-		assistantMsg := llm.Message{
-			Role:      llm.RoleAssistant,
-			Content:   resp.Content,
-			ToolCalls: resp.ToolCalls,
-		}
-		fullMsgs = append(fullMsgs, assistantMsg)
-
-		for _, tc := range resp.ToolCalls {
-			handler, ok := a.handlers[tc.Function.Name]
-			if !ok {
-				fullMsgs = append(fullMsgs, llm.Message{
-					Role:       llm.RoleTool,
-					Content:    fmt.Sprintf("unknown tool: %s", tc.Function.Name),
-					ToolCallID: tc.ID,
-				})
-				continue
-			}
-			output, err := handler(ctx, json.RawMessage(tc.Function.Arguments))
-			if err != nil {
-				output = fmt.Sprintf("tool error: %v", err)
-			}
-			fullMsgs = append(fullMsgs, llm.Message{
-				Role:       llm.RoleTool,
-				Content:    output,
-				ToolCallID: tc.ID,
-			})
-		}
-	}
-
-	return nil, fmt.Errorf("max iterations (%d) reached without final response", a.maxIter)
 }
 
 // RunStream executes the agent loop with streaming output for each LLM call.

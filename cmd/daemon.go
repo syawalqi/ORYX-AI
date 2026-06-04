@@ -80,8 +80,13 @@ func runChecks(engine *scheduler.CheckEngine, notifier *alert.WebhookNotifier, d
 	// Create alerts in DB
 	for _, a := range anomalies {
 		sev := state.SeverityWarning
-		if a.Status == "critical" {
+		switch a.Status {
+		case "critical":
 			sev = state.SeverityCritical
+		case "warning":
+			sev = state.SeverityWarning
+		default:
+			sev = state.SeverityInfo
 		}
 		dbAlert, err := db.CreateAlert(a.Name, a.Message, sev)
 		if err == nil && notifier != nil {

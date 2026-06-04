@@ -11,7 +11,7 @@ const (
 	DefaultMemCritical   = 95
 	DefaultExecTimeout   = 120
 	DefaultMaxOutput     = 200
-	DefaultMaxIterations = 10
+	DefaultMaxIterations = 100
 	DefaultTemperature   = 0.3
 	DefaultMaxTokens     = 4096
 )

@@ -9,32 +9,14 @@ import (
 )
 
 func main() {
+	cfg := loadConfig()
 	if len(os.Args) < 2 {
 		// Default to chat when invoked as just "flare"
-		cfg := config.Default()
-		configPath := os.ExpandEnv("$HOME/.config/flare/config.yaml")
-		if parsed, err := config.Load(configPath); err == nil {
-			cfg = parsed
-		}
 		runChat(cfg)
 		return
 	}
 
 	subcommand := os.Args[1]
-
-	cfg := config.Default()
-	configPath := os.ExpandEnv("$HOME/.config/flare/config.yaml")
-	if parsed, err := config.Load(configPath); err == nil {
-		cfg = parsed
-	}
-
-	// Env overrides for API key
-	if key := os.Getenv("LLM_API_KEY"); key != "" {
-		cfg.APIKey = key
-	}
-	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" && cfg.Provider == "openrouter" {
-		cfg.APIKey = key
-	}
 
 	switch subcommand {
 	case "chat":
@@ -68,6 +50,22 @@ func runChat(cfg *config.Config) {
 		fmt.Fprintf(os.Stderr, "chat error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func loadConfig() *config.Config {
+	cfg := config.Default()
+	configPath := os.ExpandEnv("$HOME/.config/flare/config.yaml")
+	if parsed, err := config.Load(configPath); err == nil {
+		cfg = parsed
+	}
+	// Env overrides for API key
+	if key := os.Getenv("LLM_API_KEY"); key != "" {
+		cfg.APIKey = key
+	}
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" && cfg.Provider == "openrouter" {
+		cfg.APIKey = key
+	}
+	return cfg
 }
 
 func usage() {
