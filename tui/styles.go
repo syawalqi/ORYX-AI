@@ -39,13 +39,15 @@ var (
 			Bold(true)
 
 	userContentStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#34D399"))
+				Foreground(lipgloss.Color("#34D399")).
+				Padding(0, 0, 0, 2)
 
 	assistantMsgStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#60A5FA")).Bold(true)
 
 	assistantContentStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#93C5FD"))
+				Foreground(lipgloss.Color("#93C5FD")).
+				Padding(0, 0, 0, 2)
 
 	toolMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#9CA3AF")).

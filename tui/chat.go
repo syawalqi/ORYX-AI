@@ -11,7 +11,7 @@ type BlockRegion struct {
 	BlockType   string // "reasoning" or "tools"
 }
 
-// detectBlockRegions scans rendered content for collapsible block headers (╔═ reasoning / ╔═ tools).
+// detectBlockRegions scans rendered content for collapsible block headers (╔═ reasoning / ╔═ tools / standalone toggle).
 func detectBlockRegions(content string) []BlockRegion {
 	var regions []BlockRegion
 	for i, line := range strings.Split(content, "\n") {
@@ -19,6 +19,10 @@ func detectBlockRegions(content string) []BlockRegion {
 			regions = append(regions, BlockRegion{ContentLine: i, BlockType: "reasoning"})
 		} else if strings.Contains(line, "╔═ tools ") {
 			regions = append(regions, BlockRegion{ContentLine: i, BlockType: "tools"})
+		} else if strings.Contains(line, "[+]") || strings.Contains(line, "[-]") {
+			// Standalone toggle — default to "reasoning" since tools block
+			// always renders its full header box even when collapsed
+			regions = append(regions, BlockRegion{ContentLine: i, BlockType: "reasoning"})
 		}
 	}
 	return regions
@@ -55,7 +59,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 			b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
 			b.WriteString(assistantContentStyle.Render(wrapText(msg.Content, width)) + "\n")
 			if msg.Reasoning != "" {
-				b.WriteString(renderReasoningBlock(msg.Reasoning, width, expandReasoning))
+				b.WriteString(renderReasoningBlock(msg.Reasoning, width, expandReasoning, false))
 			}
 			if len(msg.ToolCalls) > 0 {
 				b.WriteString(renderToolCallsBlock(msg.ToolCalls, width, expandTools))
@@ -70,7 +74,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 
 	// During streaming — reasoning
 	if streamReasoning != "" {
-		b.WriteString(renderReasoningBlock(streamReasoning, width, expandReasoning))
+		b.WriteString(renderReasoningBlock(streamReasoning, width, expandReasoning, true))
 	}
 
 	// During streaming — tool call indicator
@@ -113,7 +117,7 @@ func renderUserBox(content string, width int) string {
 
 // --- Reasoning block (collapsible) ---
 
-func renderReasoningBlock(reasoning string, width int, expanded bool) string {
+func renderReasoningBlock(reasoning string, width int, expanded bool, streaming bool) string {
 	lines := strings.Split(strings.TrimRight(reasoning, "\n"), "\n")
 	if len(lines) == 0 {
 		return ""
@@ -123,21 +127,21 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 	n := len(lines)
 
 	var toggleInd string
-	if expanded {
+	if streaming || expanded {
 		toggleInd = "[-]"
-	} else if n > 3 {
+	} else if n > 0 {
 		toggleInd = "[+]"
 	}
 
-	left := "╔═ reasoning "
-	right := "╗ " + toggleInd
-	fill := width - len(left) - len(right)
-	if fill < 1 {
-		fill = 1
-	}
-	b.WriteString(thoughtStyle.Render(left+strings.Repeat("═", fill)+right) + "\n")
+	if streaming || expanded {
+		left := "╔═ reasoning "
+		right := "╗ " + toggleInd
+		fill := width - len(left) - len(right)
+		if fill < 1 {
+			fill = 1
+		}
+		b.WriteString(thoughtStyle.Render(left+strings.Repeat("═", fill)+right) + "\n")
 
-	if expanded || n <= 3 {
 		maxLine := width - 5
 		if maxLine < 10 {
 			maxLine = 10
@@ -153,26 +157,11 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 				runes = runes[len(chunk):]
 			}
 		}
-	} else {
-		maxLine := width - 5
-		if maxLine < 10 {
-			maxLine = 10
-		}
-		for i := 0; i < 3 && i < n; i++ {
-			runes := []rune(lines[i])
-			for len(runes) > 0 {
-				chunk := runes
-				if len(chunk) > maxLine {
-					chunk = chunk[:maxLine]
-				}
-				b.WriteString(thoughtStyle.Render("║ "+string(chunk)) + "\n")
-				runes = runes[len(chunk):]
-			}
-		}
-		b.WriteString(thoughtStyle.Render(fmt.Sprintf("║ ... (%d more lines)", n-3)) + "\n")
+		b.WriteString(thoughtStyle.Render("╚"+strings.Repeat("═", width-2)+"╝") + "\n")
+	} else if toggleInd != "" {
+		// Just the toggle icon, no box
+		b.WriteString(dimmedStyle.Render(toggleInd) + "\n")
 	}
-
-	b.WriteString(thoughtStyle.Render("╚"+strings.Repeat("═", width-2)+"╝") + "\n")
 	return b.String()
 }
 
@@ -358,6 +347,7 @@ func wrapText(text string, width int) string {
 			}
 			runes = runes[breakAt:]
 		}
+		b.WriteByte('\n') // preserve original paragraph breaks
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
