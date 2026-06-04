@@ -14,8 +14,18 @@ var (
 			Padding(0, 1).
 			Bold(true)
 
+	planHeaderStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#065F46")).
+			Foreground(lipgloss.Color("#A7F3D0")).
+			Padding(0, 1).
+			Bold(true)
+
 	headerModelStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#A78BFA")).
+				Padding(0, 1)
+
+	planHeaderModelStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6EE7B7")).
 				Padding(0, 1)
 
 	alertBadgeStyle = lipgloss.NewStyle().
@@ -60,11 +70,20 @@ var (
 			Foreground(lipgloss.Color("#A78BFA")).
 			Bold(true)
 
+	planLoadingStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#6EE7B7")).
+				Bold(true)
+
 	sepStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#4B5563"))
 
 	chatBorderStyle = lipgloss.NewStyle().
 			Border(lipgloss.DoubleBorder()).
 			BorderForeground(lipgloss.Color("#7C3AED")).
+			Padding(0, 1)
+
+	planBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(lipgloss.Color("#10B981")).
 			Padding(0, 1)
 )

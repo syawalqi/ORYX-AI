@@ -11,14 +11,29 @@ type HeaderData struct {
 	Model      string
 	Alerts     int
 	DaemonRunning bool
+	PlanMode   bool
 }
 
 func RenderHeader(data HeaderData, width int) string {
-	left := headerStyle.Render(" Flare ") +
-		headerModelStyle.Render(fmt.Sprintf("[%s]", data.Model))
+	hs := headerStyle
+	ms := headerModelStyle
+	if data.PlanMode {
+		hs = planHeaderStyle
+		ms = planHeaderModelStyle
+	}
+
+	left := hs.Render(" Flare ") +
+		ms.Render(fmt.Sprintf("[%s]", data.Model))
 
 	var right string
-	if data.Alerts > 0 {
+	if data.PlanMode {
+		right = lipgloss.NewStyle().
+			Background(lipgloss.Color("#10B981")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 1).
+			Bold(true).
+			Render(" PLAN ")
+	} else if data.Alerts > 0 {
 		right = alertBadgeStyle.Render(fmt.Sprintf("⚠ %d alert(s)", data.Alerts))
 	} else {
 		right = dimmedStyle.Render("● healthy")

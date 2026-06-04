@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -68,6 +69,12 @@ type model struct {
 	sidebarData  SidebarData
 	showSidebar  bool
 	sidebarWidth int
+
+	// Block regions for mouse click detection
+	blockRegions []BlockRegion
+
+	// Plan mode — read-only analysis mode with green theme
+	planMode bool
 }
 
 // NewModel creates the chat TUI model.
@@ -172,6 +179,31 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 		m.viewport.GotoBottom()
 		return m, nil
+
+	case tea.MouseMsg:
+		// Left-click on a block header toggles expand/collapse
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && !m.loading {
+			contentLine := msg.Y - m.viewport.YPosition + m.viewport.YOffset
+			for _, region := range m.blockRegions {
+				if region.ContentLine == contentLine {
+					switch region.BlockType {
+					case "reasoning":
+						m.expandReasoning = !m.expandReasoning
+					case "tools":
+						m.expandTools = !m.expandTools
+					}
+					m.updateViewport()
+					return m, nil
+				}
+			}
+		}
+		// Forward mouse events (wheel scrolling etc.) to viewport
+		if !m.loading {
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	}
 
 	// Forward to viewport when not loading (for smooth scrolling)
@@ -188,6 +220,7 @@ func (m *model) View() string {
 		return "Loading..."
 	}
 
+	m.header.PlanMode = m.planMode
 	header := RenderHeader(m.header, m.width)
 	cmdBar := RenderCmdBar(m.width)
 
@@ -195,17 +228,25 @@ func (m *model) View() string {
 	var inputLine string
 	if m.loading {
 		spinnerStr := fmt.Sprintf(" %s ", m.spinner.View())
+		ls := loadingStyle
+		if m.planMode {
+			ls = planLoadingStyle
+		}
 		if m.streamToolRun {
-			inputLine = loadingStyle.Render("● " + spinnerStr + "executing tool...")
+			inputLine = ls.Render("● " + spinnerStr + "executing tool...")
 		} else if m.streamContent.Len() > 0 {
-			inputLine = loadingStyle.Render("● " + spinnerStr + "streaming...")
+			inputLine = ls.Render("● " + spinnerStr + "streaming...")
 		} else if m.streamReasoning.Len() > 0 {
-			inputLine = loadingStyle.Render("● " + spinnerStr + "reasoning...")
+			inputLine = ls.Render("● " + spinnerStr + "reasoning...")
 		} else {
-			inputLine = loadingStyle.Render("● " + spinnerStr + "thinking...")
+			inputLine = ls.Render("● " + spinnerStr + "thinking...")
 		}
 	} else {
-		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED")).Render("> ")
+		promptColor := "#7C3AED"
+		if m.planMode {
+			promptColor = "#10B981"
+		}
+		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color(promptColor)).Render("> ")
 		cursor := dimmedStyle.Render("▎")
 		inputLine = prompt + m.input + cursor
 	}
@@ -213,11 +254,11 @@ func (m *model) View() string {
 	// Build the content inside the border
 	chatContent := m.viewport.View()
 
-	// Sidebar beside the chat content
+	// Sidebar beside the chat content, full height
 	var sideView string
 	if m.sidebarWidth > 0 && m.showSidebar {
 		m.sidebarData.MessageCount = len(m.messages)
-		sideView = m.sidebarData.Render(m.sidebarWidth)
+		sideView = m.sidebarData.Render(m.sidebarWidth, m.viewport.Height)
 	}
 
 	// Combine chat + sidebar horizontally
@@ -235,7 +276,11 @@ func (m *model) View() string {
 	}
 
 	// Wrap everything in the double border
-	body := chatBorderStyle.Render(innerContent)
+	bs := chatBorderStyle
+	if m.planMode {
+		bs = planBorderStyle
+	}
+	body := bs.Render(innerContent)
 
 	footer := lipgloss.JoinVertical(lipgloss.Left, inputLine, cmdBar)
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
@@ -270,7 +315,13 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil // all other keys blocked during streaming
 	}
 
-	// Viewport scroll keys (always work when not inputting)
+	// --- Command palette mode (input starts with "/") ---
+	// Must come before viewport scroll keys so up/down navigate palette, not scroll
+	if strings.HasPrefix(m.input, "/") && !m.loading {
+		return m.handlePaletteKey(key, msg)
+	}
+
+	// Viewport scroll keys
 	switch key {
 	case "up", "down", "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd
@@ -297,9 +348,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// --- Command palette mode (input starts with "/") ---
-	if strings.HasPrefix(m.input, "/") && !m.loading {
-		return m.handlePaletteKey(key, msg)
+	// Toggle plan mode (Ctrl+P)
+	if key == "ctrl+p" && !m.loading {
+		m.togglePlanMode()
+		return m, nil
 	}
 
 	// Enter — send message
@@ -347,7 +399,13 @@ func (m *model) startStream(input string) tea.Cmd {
 	m.messages = append(m.messages, ChatMessage{Role: "user", Content: input})
 
 	// Start streaming in background
-	ch, err := m.agent.RunStream(ctx, m.systemPrompt, []llm.Message{userMsg})
+	prompt := m.systemPrompt
+	if m.planMode {
+		prompt += "\n\n⚠️ PLAN MODE ACTIVE — You can ONLY read files (read_file) and search logs (search_logs). " +
+			"You CANNOT run commands, write files, or modify services. " +
+			"Do NOT attempt destructive actions — they will be blocked. Analyze and suggest changes only."
+	}
+	ch, err := m.agent.RunStream(ctx, prompt, []llm.Message{userMsg})
 	if err != nil {
 		m.loading = false
 		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("stream error: %v", err)})
@@ -546,6 +604,8 @@ func (m *model) handleCommand(input string) tea.Cmd {
 				"  /memory          Show server context (memory.md)\n" +
 				"  /memory edit     Edit memory in nano/vim\n" +
 				"  /model <id>      Change model (e.g. /model deepseek/deepseek-v4-flash)\n" +
+				"  /plan            Toggle plan mode (read-only analysis)\n" +
+				"  /save            Save conversation to /tmp/\n" +
 				"  /scan            Rescan server and update memory\n" +
 				"  /skill           List FLARE's built-in abilities\n" +
 				"  /help            Show this help\n" +
@@ -557,6 +617,7 @@ func (m *model) handleCommand(input string) tea.Cmd {
 				"  Ctrl+R    Toggle reasoning expand/collapse\n" +
 				"  Ctrl+T    Toggle tool output expand/collapse\n" +
 				"  Ctrl+S    Toggle sidebar\n" +
+				"  Ctrl+P    Toggle plan mode\n" +
 				"  Enter    Send message",
 		})
 		m.updateViewport()
@@ -581,6 +642,10 @@ func (m *model) handleCommand(input string) tea.Cmd {
 	case "/scan":
 		return m.rescanServer()
 
+	case "/plan":
+		m.togglePlanMode()
+		return nil
+
 	case "/skill":
 		m.messages = append(m.messages, ChatMessage{
 			Role: "assistant",
@@ -599,6 +664,9 @@ func (m *model) handleCommand(input string) tea.Cmd {
 
 	case "/update":
 		return m.selfUpdate()
+
+	case "/save":
+		return m.saveConversation()
 
 	default:
 		m.messages = append(m.messages, ChatMessage{
@@ -786,6 +854,7 @@ func (m *model) updateViewport() {
 	}
 	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, chatW, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
 	m.viewport.SetContent(content)
+	m.blockRegions = detectBlockRegions(content)
 }
 
 func (m *model) reflowViewport() {
@@ -803,4 +872,52 @@ func (m *model) reflowViewport() {
 	m.viewport.Width = chatW
 	m.viewport.Height = m.height - 5
 	m.updateViewport()
+}
+
+// togglePlanMode switches between normal and read-only plan mode.
+// The agent blocks destructive tools, the system prompt is updated,
+// and the UI turns green.
+func (m *model) togglePlanMode() {
+	m.planMode = !m.planMode
+	m.agent.SetPlanMode(m.planMode)
+
+	label := "PLAN MODE (read-only)"
+	if !m.planMode {
+		label = "NORMAL MODE"
+	}
+	m.messages = append(m.messages, ChatMessage{
+		Role:    "assistant",
+		Content: fmt.Sprintf("🟢 Switched to **%s**", label),
+	})
+	m.updateViewport()
+	m.viewport.GotoBottom()
+}
+
+// saveConversation writes the conversation to a timestamped file.
+func (m *model) saveConversation() tea.Cmd {
+	path := fmt.Sprintf("/tmp/flare-chat-%s.txt", time.Now().Format("20060102-150405"))
+	var b strings.Builder
+	for i, msg := range m.messages {
+		b.WriteString(fmt.Sprintf("[%d] %s:\n", i+1, msg.Role))
+		if msg.Content != "" {
+			b.WriteString(msg.Content + "\n")
+		}
+		if msg.Reasoning != "" {
+			b.WriteString("--- reasoning ---\n" + msg.Reasoning + "\n")
+		}
+		b.WriteString("\n")
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+		m.messages = append(m.messages, ChatMessage{
+			Role: "error", Content: fmt.Sprintf("save failed: %v", err),
+		})
+	} else {
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: fmt.Sprintf("💾 Conversation saved to `%s` (%d bytes)\nRead it with: `cat %s`", path, len(b.String()), path),
+		})
+	}
+	m.updateViewport()
+	m.viewport.GotoBottom()
+	return nil
 }

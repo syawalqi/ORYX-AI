@@ -31,7 +31,7 @@ func Chat(cfg *config.Config) error {
 		memoryPath,
 		os.ExpandEnv("$HOME/.config/flare"),
 	)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("tui error: %w", err)

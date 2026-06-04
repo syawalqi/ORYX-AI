@@ -5,6 +5,25 @@ import (
 	"strings"
 )
 
+// BlockRegion tracks where a collapsible block header appears in rendered content.
+type BlockRegion struct {
+	ContentLine int
+	BlockType   string // "reasoning" or "tools"
+}
+
+// detectBlockRegions scans rendered content for collapsible block headers (╔═ reasoning / ╔═ tools).
+func detectBlockRegions(content string) []BlockRegion {
+	var regions []BlockRegion
+	for i, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "╔═ reasoning ") {
+			regions = append(regions, BlockRegion{ContentLine: i, BlockType: "reasoning"})
+		} else if strings.Contains(line, "╔═ tools ") {
+			regions = append(regions, BlockRegion{ContentLine: i, BlockType: "tools"})
+		}
+	}
+	return regions
+}
+
 type ChatMessage struct {
 	Role      string   // "user", "assistant", "tool", "error"
 	Content   string
@@ -125,10 +144,14 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 		}
 		for _, line := range lines {
 			runes := []rune(line)
-			if len(runes) > maxLine {
-				runes = append(runes[:maxLine-3], []rune("...")...)
+			for len(runes) > 0 {
+				chunk := runes
+				if len(chunk) > maxLine {
+					chunk = chunk[:maxLine]
+				}
+				b.WriteString(thoughtStyle.Render("║ "+string(chunk)) + "\n")
+				runes = runes[len(chunk):]
 			}
-			b.WriteString(thoughtStyle.Render("║ "+string(runes))+"\n")
 		}
 	} else {
 		maxLine := width - 5
@@ -137,10 +160,14 @@ func renderReasoningBlock(reasoning string, width int, expanded bool) string {
 		}
 		for i := 0; i < 3 && i < n; i++ {
 			runes := []rune(lines[i])
-			if len(runes) > maxLine {
-				runes = append(runes[:maxLine-3], []rune("...")...)
+			for len(runes) > 0 {
+				chunk := runes
+				if len(chunk) > maxLine {
+					chunk = chunk[:maxLine]
+				}
+				b.WriteString(thoughtStyle.Render("║ "+string(chunk)) + "\n")
+				runes = runes[len(chunk):]
 			}
-			b.WriteString(thoughtStyle.Render("║ "+string(runes))+"\n")
 		}
 		b.WriteString(thoughtStyle.Render(fmt.Sprintf("║ ... (%d more lines)", n-3)) + "\n")
 	}

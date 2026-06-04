@@ -21,6 +21,7 @@ type Agent struct {
 	maxIter      int
 	tools        []llm.ToolDef
 	handlers     map[string]ToolHandler
+	planMode     bool
 }
 
 func New(provider llm.Provider, exec *executor.Executor, model string, maxTokens int, temperature float64, maxIter int) *Agent {
@@ -274,6 +275,13 @@ func (a *Agent) SetModel(model string) {
 	a.model = model
 }
 
+// SetPlanMode enables or disables read-only plan mode.
+// In plan mode, destructive tool calls (run_command, write_file, service_action)
+// are blocked at the handler level — the LLM receives a clear error message.
+func (a *Agent) SetPlanMode(enabled bool) {
+	a.planMode = enabled
+}
+
 // Run does a blocking agent loop. Deprecated: use RunStream for streaming output.
 func (a *Agent) Run(ctx context.Context, systemPrompt string, messages []llm.Message) (*llm.ChatResponse, error) {
 	fullMsgs := make([]llm.Message, 0)
@@ -414,6 +422,28 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 					}}
 					continue
 				}
+
+				// Plan mode: block destructive actions at the handler level
+				if a.planMode {
+					switch tc.Function.Name {
+					case "run_command", "write_file", "service_action":
+						output := "⚠️ BLOCKED: " + tc.Function.Name + " is not available in plan mode. " +
+							"Switch to normal mode (/plan) or use read_file/search_logs instead."
+						fullMsgs = append(fullMsgs, llm.Message{
+							Role:       llm.RoleTool,
+							Content:    output,
+							ToolCallID: tc.ID,
+						})
+						ch <- StreamResult{ToolResult: &ToolResult{
+							ToolCallID: tc.ID,
+							Name:       tc.Function.Name,
+							Output:     output,
+						}}
+						continue
+					}
+					// read_file and search_logs fall through to the handler
+				}
+
 				output, err := handler(ctx, json.RawMessage(tc.Function.Arguments))
 				if err != nil {
 					output = fmt.Sprintf("tool error: %v", err)

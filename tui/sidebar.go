@@ -42,8 +42,8 @@ func (s *SidebarData) UpdateFromScan(info *memory.SystemInfo) {
 	s.LastScan = info.ScanTime
 }
 
-// Render builds the sidebar string for the given width.
-func (s *SidebarData) Render(width int) string {
+// Render builds the sidebar string for the given width, padded to fullHeight.
+func (s *SidebarData) Render(width int, fullHeight int) string {
 	innerW := width - 4 // padding + border
 
 	// ── SERVER SECTION ──
@@ -99,6 +99,13 @@ func (s *SidebarData) Render(width int) string {
 
 	if !s.HasScanData {
 		content += "\n" + dimmedStyle.Render("ctrl+s toggle")
+	}
+
+	// Count content lines and pad to viewport height
+	contentLines := strings.Count(content, "\n") + 1
+	padLines := fullHeight - contentLines - 2 // 2 for top/bottom border
+	if padLines > 0 {
+		content += strings.Repeat("\n", padLines)
 	}
 
 	// Border style for the sidebar panel
