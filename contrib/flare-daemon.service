@@ -1,0 +1,21 @@
+[Unit]
+Description=Flare Daemon — 24/7 VPS monitoring agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/flare daemon
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/.local/state/flare /root/.config/flare
+
+[Install]
+WantedBy=multi-user.target

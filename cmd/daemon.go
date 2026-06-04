@@ -32,14 +32,11 @@ func Daemon(cfg *config.Config) error {
 	// Parse interval
 	interval, err := time.ParseDuration(cfg.Checks.Interval)
 	if err != nil {
-		interval = 5 * time.Minute
+		interval = 1 * time.Minute
 	}
 
-	// Setup notifier
-	var notifier *alert.WebhookNotifier
-	if cfg.Alerts.Enabled && cfg.Alerts.WebhookURL != "" {
-		notifier = alert.NewWebhookNotifier(cfg.Alerts.WebhookURL)
-	}
+	// Setup notifiers based on delivery config
+	notifiers := setupNotifiers(cfg)
 
 	// Setup check engine
 	engine := scheduler.New(&cfg.Checks, exec, db)
@@ -47,22 +44,60 @@ func Daemon(cfg *config.Config) error {
 	fmt.Printf("Check interval: %s\n", interval)
 	fmt.Printf("Services monitored: %v\n", cfg.Checks.Services)
 	fmt.Printf("State DB: %s\n", stateDir+"/flare.db")
+	fmt.Printf("Alert delivery: %s\n", cfg.Alerts.Delivery)
+	if len(notifiers) > 0 {
+		fmt.Printf("Notifiers active: %d\n", len(notifiers))
+	}
+	fmt.Printf("Anomaly checks: authfail, disk_growth, mem_growth, process\n")
 
 	// Immediate first run
-	runChecks(engine, notifier, db, cfg)
+	runChecks(engine, notifiers, db, cfg)
 
 	// Scheduled loop
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		runChecks(engine, notifier, db, cfg)
+		runChecks(engine, notifiers, db, cfg)
 	}
 
 	return nil
 }
 
-func runChecks(engine *scheduler.CheckEngine, notifier *alert.WebhookNotifier, db *state.DB, cfg *config.Config) {
+// setupNotifiers creates alert notifiers based on config delivery mode.
+func setupNotifiers(cfg *config.Config) []alert.Notifier {
+	var notifiers []alert.Notifier
+
+	switch cfg.Alerts.Delivery {
+	case "telegram":
+		if cfg.Alerts.TelegramToken != "" && cfg.Alerts.TelegramChat != "" {
+			notifiers = append(notifiers, alert.NewTelegramNotifier(cfg.Alerts.TelegramToken, cfg.Alerts.TelegramChat))
+			fmt.Println("  ✓ Telegram notifier active")
+		} else {
+			fmt.Println("  ⚠ Telegram delivery configured but token/chat missing, falling back to stdout")
+		}
+	case "webhook":
+		if cfg.Alerts.WebhookURL != "" {
+			notifiers = append(notifiers, alert.NewWebhookNotifier(cfg.Alerts.WebhookURL))
+			fmt.Println("  ✓ Webhook notifier active")
+		}
+	case "all":
+		if cfg.Alerts.TelegramToken != "" && cfg.Alerts.TelegramChat != "" {
+			notifiers = append(notifiers, alert.NewTelegramNotifier(cfg.Alerts.TelegramToken, cfg.Alerts.TelegramChat))
+			fmt.Println("  ✓ Telegram notifier active")
+		}
+		if cfg.Alerts.WebhookURL != "" {
+			notifiers = append(notifiers, alert.NewWebhookNotifier(cfg.Alerts.WebhookURL))
+			fmt.Println("  ✓ Webhook notifier active")
+		}
+	default:
+		// "stdout" or anything else — just log to stdout
+	}
+
+	return notifiers
+}
+
+func runChecks(engine *scheduler.CheckEngine, notifiers []alert.Notifier, db *state.DB, cfg *config.Config) {
 	fmt.Printf("[%s] Running health checks...\n", time.Now().Format(time.RFC3339))
 	results := engine.RunAll()
 
@@ -74,10 +109,10 @@ func runChecks(engine *scheduler.CheckEngine, notifier *alert.WebhookNotifier, d
 
 	fmt.Printf("%d anomaly(ies) detected:\n", len(anomalies))
 	for _, a := range anomalies {
-		fmt.Printf("  - %s: %s (%s)\n", a.Name, a.Message, a.Status)
+		fmt.Printf("  %s [%s]: %s\n", a.Name, a.Status, a.Message)
 	}
 
-	// Create alerts in DB
+	// Create alerts in DB and send notifications
 	for _, a := range anomalies {
 		sev := state.SeverityWarning
 		switch a.Status {
@@ -88,11 +123,14 @@ func runChecks(engine *scheduler.CheckEngine, notifier *alert.WebhookNotifier, d
 		default:
 			sev = state.SeverityInfo
 		}
+
 		dbAlert, err := db.CreateAlert(a.Name, a.Message, sev)
-		if err == nil && notifier != nil {
-			err := notifier.Send(dbAlert)
-			if err != nil {
-				fmt.Printf("Alert notification failed: %v\n", err)
+		if err == nil && len(notifiers) > 0 {
+			for _, n := range notifiers {
+				err := n.Send(dbAlert)
+				if err != nil {
+					fmt.Printf("  [%s] notification failed: %v\n", a.Name, err)
+				}
 			}
 		}
 	}
@@ -113,10 +151,13 @@ func AlertCli(cfg *config.Config) error {
 		db.CreateAlert(title, body, state.SeverityWarning)
 	}
 
-	// Send webhook
-	if cfg.Alerts.Enabled && cfg.Alerts.WebhookURL != "" {
-		notifier := alert.NewWebhookNotifier(cfg.Alerts.WebhookURL)
-		return notifier.SendRaw(title, body)
+	// Send via configured notifiers
+	notifiers := setupNotifiers(cfg)
+	for _, n := range notifiers {
+		sa := &state.Alert{Title: title, Body: body, Severity: state.SeverityWarning}
+		if err := n.Send(sa); err != nil {
+			fmt.Fprintf(os.Stderr, "alert send error: %v\n", err)
+		}
 	}
 	return nil
 }

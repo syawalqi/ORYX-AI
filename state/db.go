@@ -18,6 +18,13 @@ const (
 	SeverityEmergency Severity = "emergency"
 )
 
+// ProcessInfo holds a snapshot of one process for anomaly detection.
+type ProcessInfo struct {
+	Name string `json:"name"`
+	RSS  int    `json:"rss"` // kilobytes
+	PID  int    `json:"pid"`
+}
+
 type Alert struct {
 	ID        uint64    `json:"id"`
 	Title     string    `json:"title"`
@@ -57,6 +64,10 @@ func (d *DB) init() error {
 			return err
 		}
 		_, err = tx.CreateBucketIfNotExists([]byte("results"))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte("snapshots"))
 		return err
 	})
 }
@@ -145,5 +156,56 @@ func itob(v uint64) []byte {
 	b[6] = byte(v >> 8)
 	b[7] = byte(v)
 	return b
+}
+
+// --- Snapshot storage (for anomaly detection) ---
+
+// SaveSnapshot stores a key-value snapshot (disk%, mem%, authfail count, etc.)
+func (d *DB) SaveSnapshot(key, value string) error {
+	return d.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("snapshots"))
+		return b.Put([]byte(key), []byte(value))
+	})
+}
+
+// GetSnapshot retrieves a snapshot value by key.
+func (d *DB) GetSnapshot(key string) (string, error) {
+	var val string
+	err := d.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("snapshots"))
+		data := b.Get([]byte(key))
+		if data == nil {
+			return fmt.Errorf("no snapshot for %s", key)
+		}
+		val = string(data)
+		return nil
+	})
+	return val, err
+}
+
+// SaveProcessSnapshot stores the top-N process list as JSON.
+func (d *DB) SaveProcessSnapshot(procs []ProcessInfo) error {
+	data, err := json.Marshal(procs)
+	if err != nil {
+		return err
+	}
+	return d.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("snapshots"))
+		return b.Put([]byte("processes"), data)
+	})
+}
+
+// GetProcessSnapshot retrieves the last stored process snapshot.
+func (d *DB) GetProcessSnapshot() ([]ProcessInfo, error) {
+	var procs []ProcessInfo
+	err := d.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("snapshots"))
+		data := b.Get([]byte("processes"))
+		if data == nil {
+			return fmt.Errorf("no process snapshot")
+		}
+		return json.Unmarshal(data, &procs)
+	})
+	return procs, err
 }
 

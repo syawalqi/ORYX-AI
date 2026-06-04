@@ -20,15 +20,23 @@ type Config struct {
 
 type CheckConfig struct {
 	Interval             string   `yaml:"interval"`
+	AnomalyWindow        string   `yaml:"anomaly_window"`
 	DiskThreshold        int      `yaml:"disk_threshold"`
 	MemWarningThreshold  int      `yaml:"mem_warning_threshold"`
 	MemCriticalThreshold int      `yaml:"mem_critical_threshold"`
+	DiskGrowthThreshold  int      `yaml:"disk_growth_threshold"`
+	MemGrowthThreshold   int      `yaml:"mem_growth_threshold"`
+	AuthFailThreshold    int      `yaml:"auth_fail_threshold"`
+	ProcGrowthMultiplier float64  `yaml:"proc_growth_multiplier"`
 	Services             []string `yaml:"services"`
 }
 
 type AlertConfig struct {
 	Enabled     bool   `yaml:"enabled"`
+	Delivery    string `yaml:"delivery"`
 	WebhookURL  string `yaml:"webhook_url"`
+	TelegramToken string `yaml:"telegram_token"`
+	TelegramChat  string `yaml:"telegram_chat"`
 	MinSeverity string `yaml:"min_severity"`
 	RetryCount  int    `yaml:"retry_count"`
 	RetryDelay  string `yaml:"retry_delay"`
@@ -54,13 +62,19 @@ func Default() *Config {
 		DaemonModel: DefaultDaemonModel,
 		Checks: CheckConfig{
 			Interval:             DefaultCheckInterval,
+			AnomalyWindow:        DefaultAnomalyWindow,
 			DiskThreshold:        DefaultDiskThreshold,
+			DiskGrowthThreshold:  DefaultDiskGrowth,
 			MemWarningThreshold:  DefaultMemWarning,
 			MemCriticalThreshold: DefaultMemCritical,
+			MemGrowthThreshold:   DefaultMemGrowth,
+			AuthFailThreshold:    DefaultAuthFailThreshold,
+			ProcGrowthMultiplier: DefaultProcGrowthMult,
 			Services:             []string{},
 		},
 		Alerts: AlertConfig{
 			Enabled:     false,
+			Delivery:    "stdout",
 			MinSeverity: "warning",
 			RetryCount:  3,
 			RetryDelay:  "30s",

@@ -10,6 +10,12 @@ import (
 	"github.com/syawalqi/flare/state"
 )
 
+// Notifier is the interface for alert delivery channels.
+type Notifier interface {
+	Send(alert *state.Alert) error
+}
+
+// WebhookNotifier sends alerts via HTTP webhook (Slack-compatible).
 type WebhookNotifier struct {
 	webhookURL string
 	client     *http.Client
