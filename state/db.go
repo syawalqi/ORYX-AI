@@ -68,6 +68,10 @@ func (d *DB) init() error {
 			return err
 		}
 		_, err = tx.CreateBucketIfNotExists([]byte("snapshots"))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte("fix_tickets"))
 		return err
 	})
 }
@@ -158,7 +162,126 @@ func itob(v uint64) []byte {
 	return b
 }
 
-// --- Snapshot storage (for anomaly detection) ---
+// --- Fix ticket storage (for LLM auto-fix escalation) ---
+
+// FixTicket represents an anomaly that needs LLM-based remediation.
+type FixTicket struct {
+	ID          uint64    `json:"id"`
+	CheckName   string    `json:"check_name"`
+	Severity    string    `json:"severity"`
+	Message     string    `json:"message"`
+	SystemState string    `json:"system_state"`
+	Attempts    int       `json:"attempts"`
+	Resolved    bool      `json:"resolved"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// CreateTicket stores a new fix ticket and returns it.
+func (d *DB) CreateTicket(checkName, severity, message, systemState string) (*FixTicket, error) {
+	t := &FixTicket{
+		CheckName:   checkName,
+		Severity:    severity,
+		Message:     message,
+		SystemState: systemState,
+		Attempts:    0,
+		Resolved:    false,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	err := d.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("fix_tickets"))
+		id, _ := b.NextSequence()
+		t.ID = id
+		data, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		return b.Put(itob(t.ID), data)
+	})
+	return t, err
+}
+
+// GetTicket retrieves a fix ticket by ID.
+func (d *DB) GetTicket(id uint64) (*FixTicket, error) {
+	var t FixTicket
+	err := d.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("fix_tickets"))
+		data := b.Get(itob(id))
+		if data == nil {
+			return fmt.Errorf("ticket %d not found", id)
+		}
+		return json.Unmarshal(data, &t)
+	})
+	return &t, err
+}
+
+// GetUnresolvedTickets returns all unresolved tickets, newest first.
+func (d *DB) GetUnresolvedTickets() ([]FixTicket, error) {
+	var tickets []FixTicket
+	err := d.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("fix_tickets"))
+		return b.ForEach(func(k, v []byte) error {
+			var t FixTicket
+			if err := json.Unmarshal(v, &t); err != nil {
+				return nil // skip corrupt
+			}
+			if !t.Resolved {
+				tickets = append(tickets, t)
+			}
+			return nil
+		})
+	})
+	// Reverse for newest-first
+	for i, j := 0, len(tickets)-1; i < j; i, j = i+1, j-1 {
+		tickets[i], tickets[j] = tickets[j], tickets[i]
+	}
+	return tickets, err
+}
+
+// MarkResolved sets a fix ticket as resolved.
+func (d *DB) MarkResolved(id uint64) error {
+	return d.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("fix_tickets"))
+		data := b.Get(itob(id))
+		if data == nil {
+			return fmt.Errorf("ticket %d not found", id)
+		}
+		var t FixTicket
+		if err := json.Unmarshal(data, &t); err != nil {
+			return err
+		}
+		t.Resolved = true
+		t.UpdatedAt = time.Now()
+		data, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		return b.Put(itob(id), data)
+	})
+}
+
+// IncrementAttempts increments the attempt counter on a fix ticket.
+func (d *DB) IncrementAttempts(id uint64) error {
+	return d.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte("fix_tickets"))
+		data := b.Get(itob(id))
+		if data == nil {
+			return fmt.Errorf("ticket %d not found", id)
+		}
+		var t FixTicket
+		if err := json.Unmarshal(data, &t); err != nil {
+			return err
+		}
+		t.Attempts++
+		t.UpdatedAt = time.Now()
+		data, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		return b.Put(itob(id), data)
+	})
+}
 
 // SaveSnapshot stores a key-value snapshot (disk%, mem%, authfail count, etc.)
 func (d *DB) SaveSnapshot(key, value string) error {

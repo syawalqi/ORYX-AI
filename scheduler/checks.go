@@ -414,6 +414,85 @@ func (e *CheckEngine) SystemHealthSummary() string {
 	return fmt.Sprintf("Load: %sMem: %sDisk: %sUptime: %s", load.Stdout, mem.Stdout, disk.Stdout, uptime.Stdout)
 }
 
+// Remediate tries a canned fix for a known anomaly.
+// Returns true if the fix was applied (caller should re-check).
+// Returns false if no canned fix exists (caller should escalate to LLM).
+func (e *CheckEngine) Remediate(result CheckResult) bool {
+	switch result.Name {
+	case "disk":
+		return e.remediateDisk()
+	case "disk_growth":
+		return e.remediateDisk()
+	case "process":
+		if strings.Contains(result.Message, "warp-svc") {
+			return e.remediateWarp()
+		}
+		return false
+	case "service:" + strings.TrimPrefix(result.Name, "service:"):
+		svcName := strings.TrimPrefix(result.Name, "service:")
+		return e.remediateService(svcName)
+	default:
+		return false
+	}
+}
+
+func (e *CheckEngine) remediateDisk() bool {
+	fmt.Println("  → Canned fix: cleaning disk space...")
+
+	// Clear journal logs
+	e.exec.Run(e.ctx, "journalctl --vacuum-size=200M 2>/dev/null")
+	// Remove unused packages
+	e.exec.Run(e.ctx, "apt autoremove -y 2>/dev/null")
+	// Clean apt cache
+	e.exec.Run(e.ctx, "apt clean 2>/dev/null")
+	// Docker prune if docker exists
+	e.exec.Run(e.ctx, "docker system prune -f 2>/dev/null")
+
+	// Re-check disk after fix
+	r, err := e.exec.Run(e.ctx, "df -P / 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%'")
+	if err != nil {
+		return false
+	}
+	usage := 0
+	fmt.Sscanf(r.Stdout, "%d", &usage)
+
+	fmt.Printf("  → Disk after cleanup: %d%%\n", usage)
+
+	// Check if it dropped below threshold
+	threshold := e.cfg.DiskThreshold
+	if usage < threshold {
+		fmt.Println("  → Canned fix resolved the issue.")
+		return true
+	}
+	fmt.Println("  → Canned fix insufficient, escalating.")
+	return false
+}
+
+func (e *CheckEngine) remediateService(name string) bool {
+	fmt.Printf("  → Canned fix: restarting service %s...\n", name)
+	e.exec.Run(e.ctx, fmt.Sprintf("systemctl restart %s 2>/dev/null", name))
+
+	// Re-check
+	r, err := e.exec.Run(e.ctx, fmt.Sprintf("systemctl is-active %s 2>/dev/null", name))
+	if err != nil {
+		return false
+	}
+	status := strings.TrimSpace(r.Stdout)
+	if status == "active" {
+		fmt.Printf("  → Service %s restarted successfully.\n", name)
+		return true
+	}
+	fmt.Printf("  → Service %s still not active after restart.\n", name)
+	return false
+}
+
+func (e *CheckEngine) remediateWarp() bool {
+	fmt.Println("  → Canned fix: restarting warp-svc (known memory workaround)...")
+	e.exec.Run(e.ctx, "systemctl restart warp-svc 2>/dev/null")
+	fmt.Println("  → warp-svc restarted. Will check next cycle.")
+	return true // Always return true — memory improvement visible over time
+}
+
 // AlertFromResults checks if any results need alerting
 func AlertFromResults(results []CheckResult) []CheckResult {
 	var alerts []CheckResult

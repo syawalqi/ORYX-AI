@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/syawalqi/flare/alert"
 	"github.com/syawalqi/flare/config"
 	"github.com/syawalqi/flare/executor"
+	"github.com/syawalqi/flare/memory"
 	"github.com/syawalqi/flare/scheduler"
 	"github.com/syawalqi/flare/state"
 )
@@ -112,25 +116,91 @@ func runChecks(engine *scheduler.CheckEngine, notifiers []alert.Notifier, db *st
 		fmt.Printf("  %s [%s]: %s\n", a.Name, a.Status, a.Message)
 	}
 
-	// Create alerts in DB and send notifications
+	// Auto-fix escalation chain: canned → LLM ticket
 	for _, a := range anomalies {
-		sev := state.SeverityWarning
-		switch a.Status {
-		case "critical":
-			sev = state.SeverityCritical
-		case "warning":
-			sev = state.SeverityWarning
-		default:
-			sev = state.SeverityInfo
+		fmt.Printf("  → Attempting auto-fix for %s...\n", a.Name)
+
+		// Step 1: Try canned fix (in-process, no API cost)
+		fixed := engine.Remediate(a)
+		if fixed {
+			fmt.Printf("  ✓ %s resolved by canned fix.\n", a.Name)
+			continue
 		}
 
-		dbAlert, err := db.CreateAlert(a.Name, a.Message, sev)
-		if err == nil && len(notifiers) > 0 {
-			for _, n := range notifiers {
-				err := n.Send(dbAlert)
-				if err != nil {
-					fmt.Printf("  [%s] notification failed: %v\n", a.Name, err)
-				}
+		// Step 2: Canned fix failed or doesn't exist → create LLM fix ticket
+		fmt.Printf("  → Canned fix insufficient for %s, escalating to LLM.\n", a.Name)
+
+		// Capture system state for the ticket
+		systemState := captureSystemState(engine)
+
+		ticket, err := db.CreateTicket(a.Name, a.Status, a.Message, systemState)
+		if err != nil {
+			fmt.Printf("  ✗ Failed to create fix ticket: %v\n", err)
+			// Fall through to direct alert
+			sendAlert(notifiers, db, a)
+			continue
+		}
+
+		fmt.Printf("  → Created fix ticket #%d\n", ticket.ID)
+
+		// Step 3: Spawn flare fix in background (pipe ticket via stdin to avoid DB lock)
+		go func(tid uint64, name string, ticket *state.FixTicket) {
+			cmd := exec.Command("flare", "fix", "--stdin")
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				fmt.Printf("  [ticket #%d] stdin pipe error: %v\n", tid, err)
+				return
+			}
+
+			// Write ticket JSON to stdin
+			if err := json.NewEncoder(stdin).Encode(ticket); err != nil {
+				fmt.Printf("  [ticket #%d] encode error: %v\n", tid, err)
+				stdin.Close()
+				return
+			}
+			stdin.Close()
+
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Printf("  [ticket #%d] flare fix exited: %v\n", tid, err)
+			}
+			if len(output) > 0 {
+				fmt.Printf("  [ticket #%d] output:\n%s\n", tid, string(output))
+			}
+		}(ticket.ID, a.Name, ticket)
+	}
+}
+
+// captureSystemState gathers current system snapshot for the fix ticket.
+func captureSystemState(engine *scheduler.CheckEngine) string {
+	exec := executor.New(30, 200, []string{})
+	scanCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	info, err := memory.Scan(scanCtx, exec)
+	if err != nil {
+		return fmt.Sprintf("scan error: %v", err)
+	}
+	return info.Render()
+}
+
+// sendAlert creates a DB alert and sends notifications.
+func sendAlert(notifiers []alert.Notifier, db *state.DB, result scheduler.CheckResult) {
+	sev := state.SeverityWarning
+	switch result.Status {
+	case "critical":
+		sev = state.SeverityCritical
+	case "warning":
+		sev = state.SeverityWarning
+	default:
+		sev = state.SeverityInfo
+	}
+
+	dbAlert, err := db.CreateAlert(result.Name, result.Message, sev)
+	if err == nil && len(notifiers) > 0 {
+		for _, n := range notifiers {
+			if err := n.Send(dbAlert); err != nil {
+				fmt.Printf("  [%s] notification failed: %v\n", result.Name, err)
 			}
 		}
 	}

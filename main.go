@@ -21,6 +21,11 @@ func main() {
 	switch subcommand {
 	case "chat":
 		runChat(cfg)
+	case "fix":
+		if err := cmd.Fix(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "fix error: %v\n", err)
+			os.Exit(1)
+		}
 	case "setup":
 		if err := cmd.Setup(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "setup error: %v\n", err)
@@ -75,6 +80,7 @@ Usage:
   flare setup      Interactive first-run configuration
   flare chat       Interactive chat with LLM agent
   flare daemon     Background monitoring daemon
+  flare fix        Fix an anomaly (auto-remediate with LLM)
   flare alert      Send an alert (script hook)
   flare help       Show this help
 `)
