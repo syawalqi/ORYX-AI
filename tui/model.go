@@ -28,11 +28,11 @@ type editorFinishedMsg struct {
 }
 
 type model struct {
-	ready      bool
-	viewport   viewport.Model
-	input      string
-	messages   []ChatMessage
-	header     HeaderData
+	ready    bool
+	viewport viewport.Model
+	input    string
+	messages []ChatMessage
+	header   HeaderData
 
 	agent        *agent.Agent
 	systemPrompt string
@@ -51,15 +51,23 @@ type model struct {
 	showLogo bool
 
 	// Streaming state
-	loading       bool
-	streamCh      <-chan agent.StreamResult
-	streamContent strings.Builder
+	loading         bool
+	streamCh        <-chan agent.StreamResult
+	streamContent   strings.Builder
 	streamReasoning strings.Builder // accumulated reasoning text
-	streamMsgs    []string // lines emitted during streaming (tool calls shown here)
-	streamToolRun bool     // currently executing a tool
+	streamMsgs      []string        // lines emitted during streaming (tool calls shown here)
+	streamToolRun   bool            // currently executing a tool
 
 	// Spinner
 	spinner spinner.Model
+
+	// Command palette
+	palette *CmdPalette
+
+	// Sidebar
+	sidebarData  SidebarData
+	showSidebar  bool
+	sidebarWidth int
 }
 
 // NewModel creates the chat TUI model.
@@ -77,8 +85,13 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir s
 		header: HeaderData{
 			Model: ag.ModelName(),
 		},
-		spinner:  s,
-		showLogo: true,
+		spinner: s,
+		palette: NewCmdPalette(),
+		sidebarData: SidebarData{
+			ModelName: ag.ModelName(),
+		},
+		showSidebar: true,
+		showLogo:    true,
 	}
 }
 
@@ -92,12 +105,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		innerW := msg.Width - 4 // 2 for border, 2 for padding
+
+		// Calculate sidebar width
+		sideW := 28
+		if msg.Width < 100 || !m.showSidebar {
+			sideW = 0
+		}
+		chatW := innerW - sideW
+		if chatW < 40 {
+			chatW = 40
+			sideW = 0
+		}
+		m.sidebarWidth = sideW
+
 		if !m.ready {
-			m.viewport = viewport.New(innerW, msg.Height-5)
+			m.viewport = viewport.New(chatW, msg.Height-5)
 			m.viewport.YPosition = 2 // header(1) + border top(1)
 			m.ready = true
 		} else {
-			m.viewport.Width = innerW
+			m.viewport.Width = chatW
 			m.viewport.Height = msg.Height - 5
 		}
 		m.updateViewport()
@@ -188,8 +214,31 @@ func (m *model) View() string {
 		inputLine = prompt + m.input + cursor
 	}
 
+	// Command palette overlay
+	var paletteView string
+	if strings.HasPrefix(m.input, "/") && !m.loading {
+		paletteView = m.palette.Render(m.width)
+	}
+
+	// Sidebar
+	var sidebarView string
+	if m.sidebarWidth > 0 && m.showSidebar {
+		m.sidebarData.MessageCount = len(m.messages)
+		sidebarView = m.sidebarData.Render(m.sidebarWidth)
+	}
+
 	footer := lipgloss.JoinVertical(lipgloss.Left, inputLine, cmdBar)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+
+	// Main area: chat + sidebar side by side
+	mainArea := body
+	if sidebarView != "" {
+		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, body, sidebarView)
+	}
+
+	if paletteView != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, header, mainArea, paletteView, footer)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, header, mainArea, footer)
 }
 
 // --- key handling ---
@@ -239,6 +288,18 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.expandTools = !m.expandTools
 		m.updateViewport()
 		return m, nil
+	}
+
+	// Toggle sidebar
+	if key == "ctrl+s" && !m.loading {
+		m.showSidebar = !m.showSidebar
+		m.reflowViewport()
+		return m, nil
+	}
+
+	// --- Command palette mode (input starts with "/") ---
+	if strings.HasPrefix(m.input, "/") && !m.loading {
+		return m.handlePaletteKey(key, msg)
 	}
 
 	// Enter — send message
@@ -400,6 +461,66 @@ func (m *model) finalizeStream() {
 	m.streamMsgs = nil
 }
 
+// --- command palette ---
+
+func (m *model) handlePaletteKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up":
+		m.palette.CursorUp()
+		return m, nil
+
+	case "down":
+		m.palette.CursorDown()
+		return m, nil
+
+	case "tab":
+		if sel := m.palette.Selected(); sel != "" {
+			m.input = sel + " "
+			m.palette.Filter("")
+		}
+		return m, nil
+
+	case "enter":
+		if sel := m.palette.Selected(); sel != "" {
+			// If the input is just the command name (no args), fill it in
+			if !strings.Contains(strings.TrimSpace(m.input), " ") {
+				m.input = sel + " "
+				m.palette.Filter("")
+				return m, nil
+			}
+		}
+		// Has args or nothing selected — execute normally
+		input := strings.TrimSpace(m.input)
+		m.input = ""
+		if input != "" {
+			return m, m.handleCommand(input)
+		}
+		return m, nil
+
+	case "esc":
+		m.input = ""
+		return m, nil
+
+	case "backspace":
+		if len(m.input) > 1 {
+			m.input = m.input[:len(m.input)-1]
+			m.palette.Filter(strings.TrimPrefix(m.input, "/"))
+		} else {
+			// Only "/" left — clear entirely
+			m.input = ""
+		}
+		return m, nil
+
+	default:
+		// Regular character — append and refilter
+		if len(key) == 1 {
+			m.input += key
+			m.palette.Filter(strings.TrimPrefix(m.input, "/"))
+		}
+		return m, nil
+	}
+}
+
 // --- commands ---
 
 func (m *model) handleCommand(input string) tea.Cmd {
@@ -428,13 +549,15 @@ func (m *model) handleCommand(input string) tea.Cmd {
 				"  /scan            Rescan server and update memory\n" +
 				"  /skill           List FLARE's built-in abilities\n" +
 				"  /help            Show this help\n" +
-				"  /quit            Exit\n\n" +
-					"Keys:\n" +
-					"  ↑/↓      Scroll\n" +
-					"  PgUp/Dn  Page scroll\n" +
-					"  Ctrl+R    Toggle reasoning expand/collapse\n" +
-					"  Ctrl+T    Toggle tool output expand/collapse\n" +
-					"  Enter    Send message",
+				"  /quit            Exit\n" +
+				"  /update          Check for updates\n\n" +
+				"Keys:\n" +
+				"  ↑/↓      Scroll\n" +
+				"  PgUp/Dn  Page scroll\n" +
+				"  Ctrl+R    Toggle reasoning expand/collapse\n" +
+				"  Ctrl+T    Toggle tool output expand/collapse\n" +
+				"  Ctrl+S    Toggle sidebar\n" +
+				"  Enter    Send message",
 		})
 		m.updateViewport()
 		m.viewport.GotoBottom()
@@ -473,6 +596,9 @@ func (m *model) handleCommand(input string) tea.Cmd {
 		m.updateViewport()
 		m.viewport.GotoBottom()
 		return nil
+
+	case "/update":
+		return m.selfUpdate()
 
 	default:
 		m.messages = append(m.messages, ChatMessage{
@@ -572,6 +698,7 @@ func (m *model) changeModel(parts []string) tea.Cmd {
 	// Update agent and header
 	m.agent.SetModel(newModel)
 	m.header.Model = newModel
+	m.sidebarData.ModelName = newModel
 
 	m.messages = append(m.messages, ChatMessage{
 		Role:    "assistant",
@@ -612,6 +739,10 @@ func (m *model) rescanServer() tea.Cmd {
 		Role:    "assistant",
 		Content: fmt.Sprintf("✓ Server scan complete — %d bytes written to memory.", len(content)),
 	})
+
+	// Update sidebar data
+	m.sidebarData.UpdateFromScan(info)
+
 	m.updateViewport()
 	m.viewport.GotoBottom()
 	return nil
@@ -636,9 +767,40 @@ func (m *model) editFile(path string) tea.Cmd {
 	})
 }
 
+func (m *model) selfUpdate() tea.Cmd {
+	m.messages = append(m.messages, ChatMessage{
+		Role:    "assistant",
+		Content: "🔄 Flare self-update not yet implemented.\nSource at: github.com/syawalqi/flare",
+	})
+	m.updateViewport()
+	m.viewport.GotoBottom()
+	return nil
+}
+
 // --- rendering ---
 
 func (m *model) updateViewport() {
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, m.width, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
+	chatW := m.viewport.Width
+	if chatW < 1 {
+		chatW = m.width - 4
+	}
+	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, chatW, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
 	m.viewport.SetContent(content)
+}
+
+func (m *model) reflowViewport() {
+	innerW := m.width - 4
+	sideW := 28
+	if m.width < 100 || !m.showSidebar {
+		sideW = 0
+	}
+	chatW := innerW - sideW
+	if chatW < 40 {
+		chatW = 40
+		sideW = 0
+	}
+	m.sidebarWidth = sideW
+	m.viewport.Width = chatW
+	m.viewport.Height = m.height - 5
+	m.updateViewport()
 }
