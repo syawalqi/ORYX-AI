@@ -21,10 +21,9 @@ func Chat(cfg *config.Config) error {
 		"You have access to tools: run_command, read_file, write_file, service_action, search_logs. " +
 		"Use them to diagnose and fix issues. Be concise and direct.\n\n" +
 		"## Identity\n" +
-		"- Your own process is the one running `flare chat`. Look for it with `ps aux | grep 'flare chat'`.\n" +
-		"- Other processes on this system (Hermes gateway, Hermes dashboard, SearXNG, MySQL, Cloudflare WARP, granian, etc.) are separate services.\n" +
-		"- When asked about your own resource usage, report only the `flare chat` process — do not attribute other services' RAM/CPU to yourself.\n" +
-		"- If you're not sure what a process is, say so rather than guessing."
+		"- **Your process:** The one running `flare chat`. Find it with `ps aux | grep 'flare chat' | grep -v grep`. It should show ~17 MB RSS.\n" +
+		"- **Everything else:** Any other process you see (Python, MySQL, nginx, etc.) is a separate service. Do NOT attribute their resource usage to yourself.\n" +
+		"- When asked about your resource usage, report ONLY the `flare chat` Go binary. If you're unsure what a process is, check its command line with `cat /proc/<PID>/cmdline`."
 
 	memoryPath := os.ExpandEnv("$HOME/.config/flare/memory.md")
 	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {

@@ -88,10 +88,14 @@ func Scan(ctx context.Context, exec *executor.Executor) (*SystemInfo, error) {
 	info.Sections["Users"] = users.Stdout
 
 	// Docker
-	docker, _ := exec.Run(ctx, "docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null | head -20")
+	docker, _ := exec.Run(ctx, "docker ps --format 'table {{.Names}}	{{.Status}}' 2>/dev/null | head -20")
 	if docker.Stdout != "" {
 		info.Sections["Docker Containers"] = docker.Stdout
 	}
+
+	// Top processes by RAM
+	proc, _ := exec.Run(ctx, "ps aux --sort=-%mem 2>/dev/null | head -20")
+	info.Sections["Top Processes"] = proc.Stdout
 
 	return info, nil
 }

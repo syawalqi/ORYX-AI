@@ -533,14 +533,12 @@ func (m *model) handlePaletteKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd
 
 	case "enter":
 		if sel := m.palette.Selected(); sel != "" {
-			// If the input is just the command name (no args), fill it in
-			if !strings.Contains(strings.TrimSpace(m.input), " ") {
-				m.input = sel + " "
-				m.palette.Filter("")
-				return m, nil
-			}
+			// Execute the selected command immediately
+			m.input = ""
+			m.palette.Filter("")
+			return m, m.handleCommand(sel)
 		}
-		// Has args or nothing selected — execute normally
+		// Nothing selected — execute input as-is
 		input := strings.TrimSpace(m.input)
 		m.input = ""
 		if input != "" {
