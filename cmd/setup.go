@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/syawalqi/flare/config"
-	"github.com/syawalqi/flare/executor"
-	"github.com/syawalqi/flare/memory"
-	"github.com/syawalqi/flare/tui/setup"
+	"github.com/syawalqi/oryx/config"
+	"github.com/syawalqi/oryx/executor"
+	"github.com/syawalqi/oryx/memory"
+	"github.com/syawalqi/oryx/tui/setup"
 )
 
 func Setup(cfg *config.Config) error {
@@ -23,7 +23,7 @@ func Setup(cfg *config.Config) error {
 	cfg.Model = result.Model
 	cfg.DaemonModel = result.Model
 
-	configDir := os.ExpandEnv("$HOME/.config/flare")
+	configDir := os.ExpandEnv("$HOME/.config/oryx")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("mkdir config: %w", err)
 	}
@@ -52,7 +52,7 @@ func Setup(cfg *config.Config) error {
 		return fmt.Errorf("save memory: %w", err)
 	}
 	fmt.Printf("✅ Memory saved to %s (%d bytes)\n", memoryPath, len(content))
-	fmt.Println("\nSetup complete! Run 'flare chat' to start.")
+	fmt.Println("\nSetup complete! Run 'oryx chat' to start.")
 	return nil
 }
 

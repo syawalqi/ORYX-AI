@@ -8,23 +8,23 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/syawalqi/flare/alert"
-	"github.com/syawalqi/flare/config"
-	"github.com/syawalqi/flare/executor"
-	"github.com/syawalqi/flare/memory"
-	"github.com/syawalqi/flare/scheduler"
-	"github.com/syawalqi/flare/state"
+	"github.com/syawalqi/oryx/alert"
+	"github.com/syawalqi/oryx/config"
+	"github.com/syawalqi/oryx/executor"
+	"github.com/syawalqi/oryx/memory"
+	"github.com/syawalqi/oryx/scheduler"
+	"github.com/syawalqi/oryx/state"
 )
 
 func Daemon(cfg *config.Config) error {
-	fmt.Println("Flare daemon starting...")
+	fmt.Println("ORYX daemon starting...")
 
 	// Open state database
-	stateDir := os.ExpandEnv("$HOME/.local/state/flare")
+	stateDir := os.ExpandEnv("$HOME/.local/state/oryx")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return fmt.Errorf("mkdir state: %w", err)
 	}
-	db, err := state.Open(stateDir + "/flare.db")
+	db, err := state.Open(stateDir + "/oryx.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -47,7 +47,7 @@ func Daemon(cfg *config.Config) error {
 
 	fmt.Printf("Check interval: %s\n", interval)
 	fmt.Printf("Services monitored: %v\n", cfg.Checks.Services)
-	fmt.Printf("State DB: %s\n", stateDir+"/flare.db")
+	fmt.Printf("State DB: %s\n", stateDir+"/oryx.db")
 	fmt.Printf("Alert delivery: %s\n", cfg.Alerts.Delivery)
 	if len(notifiers) > 0 {
 		fmt.Printf("Notifiers active: %d\n", len(notifiers))
@@ -143,9 +143,9 @@ func runChecks(engine *scheduler.CheckEngine, notifiers []alert.Notifier, db *st
 
 		fmt.Printf("  → Created fix ticket #%d\n", ticket.ID)
 
-		// Step 3: Spawn flare fix in background (pipe ticket via stdin to avoid DB lock)
+		// Step 3: Spawn oryx fix in background (pipe ticket via stdin to avoid DB lock)
 		go func(tid uint64, name string, ticket *state.FixTicket) {
-			cmd := exec.Command("flare", "fix", "--stdin")
+			cmd := exec.Command("oryx", "fix", "--stdin")
 			stdin, err := cmd.StdinPipe()
 			if err != nil {
 				fmt.Printf("  [ticket #%d] stdin pipe error: %v\n", tid, err)
@@ -162,7 +162,7 @@ func runChecks(engine *scheduler.CheckEngine, notifiers []alert.Notifier, db *st
 
 			output, err := cmd.CombinedOutput()
 			if err != nil {
-				fmt.Printf("  [ticket #%d] flare fix exited: %v\n", tid, err)
+				fmt.Printf("  [ticket #%d] oryx fix exited: %v\n", tid, err)
 			}
 			if len(output) > 0 {
 				fmt.Printf("  [ticket #%d] output:\n%s\n", tid, string(output))
@@ -208,14 +208,14 @@ func sendAlert(notifiers []alert.Notifier, db *state.DB, result scheduler.CheckR
 
 func AlertCli(cfg *config.Config) error {
 	if len(os.Args) < 4 {
-		return fmt.Errorf("usage: flare alert <title> <body>")
+		return fmt.Errorf("usage: oryx alert <title> <body>")
 	}
 	title := os.Args[2]
 	body := os.Args[3]
 
 	// Store in DB
-	stateDir := os.ExpandEnv("$HOME/.local/state/flare")
-	db, err := state.Open(stateDir + "/flare.db")
+	stateDir := os.ExpandEnv("$HOME/.local/state/oryx")
+	db, err := state.Open(stateDir + "/oryx.db")
 	if err == nil {
 		defer db.Close()
 		db.CreateAlert(title, body, state.SeverityWarning)
