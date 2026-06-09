@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/syawalqi/flare/state"
+	"github.com/syawalqi/oryx/state"
 )
 
 // Notifier is the interface for alert delivery channels.
@@ -34,12 +34,12 @@ func (n *WebhookNotifier) Send(alert *state.Alert) error {
 
 func (n *WebhookNotifier) SendRaw(title, body string) error {
 	payload := map[string]interface{}{
-		"text": fmt.Sprintf("*Flare Alert*\n%s\n\n%s", title, body),
+		"text": fmt.Sprintf("*ORYX Alert*\n%s\n\n%s", title, body),
 	}
 
 	// Slack-compatible format
 	slackPayload := map[string]interface{}{
-		"text":       fmt.Sprintf("🚨 *Flare Alert*: %s", title),
+		"text":       fmt.Sprintf("🚨 *ORYX Alert*: %s", title),
 		"attachments": []map[string]interface{}{
 			{
 				"text":  body,

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/syawalqi/flare/state"
+	"github.com/syawalqi/oryx/state"
 )
 
 // TelegramNotifier sends alerts via Telegram Bot API.
@@ -45,7 +45,7 @@ func (n *TelegramNotifier) Send(alert *state.Alert) error {
 		title = fmt.Sprintf("*%s* (severity: %s)", alert.Title, alert.Severity)
 	}
 
-	text := fmt.Sprintf("%s Flare Alert\n%s\n\n%s", emoji, title, alert.Body)
+	text := fmt.Sprintf("%s ORYX Alert\n%s\n\n%s", emoji, title, alert.Body)
 	return n.SendRaw(text)
 }
 
