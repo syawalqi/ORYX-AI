@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/syawalqi/flare/cmd"
-	"github.com/syawalqi/flare/config"
+	"github.com/syawalqi/oryx/cmd"
+	"github.com/syawalqi/oryx/config"
 )
 
 // Version is set at build time via -ldflags.
@@ -14,7 +14,7 @@ var version = "dev"
 func main() {
 	cfg := loadConfig()
 	if len(os.Args) < 2 {
-		// Default to chat when invoked as just "flare"
+		// Default to chat when invoked as just "oryx"
 		runChat(cfg)
 		return
 	}
@@ -44,6 +44,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "alert error: %v\n", err)
 			os.Exit(1)
 		}
+	case "telegram":
+		if err := cmd.Telegram(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "telegram error: %v\n", err)
+			os.Exit(1)
+		}
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -54,7 +59,14 @@ func main() {
 }
 
 func runChat(cfg *config.Config) {
-	if err := cmd.Chat(cfg, version); err != nil {
+	resume := false
+	for _, arg := range os.Args {
+		if arg == "--resume" || arg == "-r" {
+			resume = true
+			break
+		}
+	}
+	if err := cmd.Chat(cfg, version, resume); err != nil {
 		fmt.Fprintf(os.Stderr, "chat error: %v\n", err)
 		os.Exit(1)
 	}
@@ -62,7 +74,7 @@ func runChat(cfg *config.Config) {
 
 func loadConfig() *config.Config {
 	cfg := config.Default()
-	configPath := os.ExpandEnv("$HOME/.config/flare/config.yaml")
+	configPath := os.ExpandEnv("$HOME/.config/oryx/config.yaml")
 	if parsed, err := config.Load(configPath); err == nil {
 		cfg = parsed
 	}
@@ -77,14 +89,15 @@ func loadConfig() *config.Config {
 }
 
 func usage() {
-	fmt.Print(`Flare — Server Management AI Agent
+	fmt.Print(`ORYX — General Management AI Agent
 
 Usage:
-  flare setup      Interactive first-run configuration
-  flare chat       Interactive chat with LLM agent
-  flare daemon     Background monitoring daemon
-  flare fix        Fix an anomaly (auto-remediate with LLM)
-  flare alert      Send an alert (script hook)
-  flare help       Show this help
+  oryx setup      Interactive first-run configuration
+  oryx chat       Interactive chat with LLM agent
+  oryx telegram   Run as Telegram bot (long-polling)
+  oryx daemon     Background monitoring daemon
+  oryx fix        Fix an anomaly (auto-remediate with LLM)
+  oryx alert      Send an alert (script hook)
+  oryx help       Show this help
 `)
 }
