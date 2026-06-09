@@ -53,6 +53,7 @@ type AgentConfig struct {
 	MaxIterations int     `yaml:"max_iterations"`
 	Temperature   float64 `yaml:"temperature"`
 	MaxTokens     int     `yaml:"max_tokens"`
+	MaxCost       float64 `yaml:"max_cost"`
 }
 
 func Default() *Config {
@@ -92,6 +93,7 @@ func Default() *Config {
 			MaxIterations: DefaultMaxIterations,
 			Temperature:   DefaultTemperature,
 			MaxTokens:     DefaultMaxTokens,
+			MaxCost:       DefaultMaxCost,
 		},
 	}
 }

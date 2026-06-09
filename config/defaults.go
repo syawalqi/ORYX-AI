@@ -4,6 +4,7 @@ package config
 const (
 	DefaultProvider           = "openrouter"
 	DefaultModel              = "google/gemini-2.0-flash"
+	DefaultMaxCost            = 0.05 // $0.05 per session ceiling
 	DefaultDaemonModel        = "google/gemini-2.0-flash"
 	DefaultCheckInterval      = "1m"
 	DefaultAnomalyWindow      = "5m"
