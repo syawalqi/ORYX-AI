@@ -43,7 +43,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 	var b strings.Builder
 
 	if showLogo && len(messages) == 0 {
-		b.WriteString(renderEye(width, viewportHeight))
+		b.WriteString(RenderOryxLogo(width, viewportHeight))
 		return b.String()
 	}
 
@@ -56,7 +56,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 		case "user":
 			b.WriteString(renderUserBox(wrapText(msg.Content, width-2), width))
 		case "assistant":
-			b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
+			b.WriteString(assistantMsgStyle.Render("ORYX:") + "\n")
 			rendered := renderMarkdown(msg.Content, width)
 			if rendered != "" {
 				b.WriteString(rendered + "\n")
@@ -87,7 +87,7 @@ func renderMessages(messages []ChatMessage, streamContent, streamReasoning strin
 
 	// During streaming — content
 	if streamContent != "" {
-		b.WriteString(assistantMsgStyle.Render("Flare:") + "\n")
+		b.WriteString(assistantMsgStyle.Render("ORYX:") + "\n")
 		rendered := renderMarkdown(streamContent, width)
 		if rendered != "" {
 			b.WriteString(rendered)
@@ -240,87 +240,7 @@ func renderToolCallsBlock(toolCalls []string, width int, expanded bool) string {
 	return b.String()
 }
 
-// --- Startup logo (highly detailed static ASCII eye) ---
-
-var flareTagline = "Flare - Server Management AI Agent"
-
-// renderEye displays the user's custom ASCII art eclipse/petal design.
-func renderEye(width int, viewportHeight int) string {
-	art := []string{
-		":            .:::.            :",
-		"                    :::::          :--=--:          :::::        ",
-		"                  :::::::         :-+***+-:         :::::::      ",
-		"                ::::::::::       :=+*%@##+=:       ::::::::::        ",
-		"               :::::::::::::     -=*%@@@#*+-     :::::::::::::      ",
-		"               ---::::::::::::   -+#%@@@%#+-   ::::::::::::---       ",
-		"               ---:::::::::::::  --+*@@@*+--  :::::::::::::---     ",
-		"                ---::::::::::::: :=*-@@@-*=: :::::::::::::---        ",
-		"                  --:::::::::::::::+**@**+::::::::::::::--      ",
-		"                    --::::::::::.::-=+++=-::.:::::::::::--         ",
-		"                       --:::::::::.:-----:.:::::::::--          ",
-		"                           --:::::::#@#@#:::::::--                   ",
-	}
-
-	// Determine the max width of trimmed content
-	maxContentW := 0
-	trimmed := make([]string, len(art))
-	for i, line := range art {
-		trimmed[i] = strings.TrimSpace(line)
-		if len(trimmed[i]) > maxContentW {
-			maxContentW = len(trimmed[i])
-		}
-	}
-
-	// Center each trimmed line within maxContentW (left-pad only)
-	for i, line := range trimmed {
-		if len(line) < maxContentW {
-			left := (maxContentW - len(line)) / 2
-			trimmed[i] = strings.Repeat(" ", left) + line
-		}
-	}
-
-	var b strings.Builder
-
-	// Vertical centering: art + blank + tagline + hint
-	artLines := len(trimmed)
-	totalArtHeight := artLines + 3 // art + blank line + tagline + hint
-	topPad := (viewportHeight - totalArtHeight) / 2
-	if topPad < 0 {
-		topPad = 0
-	}
-	for i := 0; i < topPad; i++ {
-		b.WriteString("\n")
-	}
-
-	pad := (width - maxContentW) / 2
-	if pad < 0 {
-		pad = 0
-	}
-
-	for _, line := range trimmed {
-		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString(assistantContentStyle.Render(line) + "\n")
-	}
-
-	b.WriteString("\n")
-
-	// Tagline centered
-	tagPad := (width - len(flareTagline)) / 2
-	if tagPad < 0 {
-		tagPad = 0
-	}
-	b.WriteString(strings.Repeat(" ", tagPad) + dimmedStyle.Render(flareTagline) + "\n")
-
-	// Hint
-	hint := "Send a message to start."
-	hintPad := (width - len(hint)) / 2
-	if hintPad < 0 {
-		hintPad = 0
-	}
-	b.WriteString(strings.Repeat(" ", hintPad) + dimmedStyle.Render(hint) + "\n")
-
-	return b.String()
-}
+// --- Startup logo --- (removed, now in oryx_logo.go)
 
 // wrapText splits long lines at word boundaries so they don't overflow the viewport.
 func wrapText(text string, width int) string {

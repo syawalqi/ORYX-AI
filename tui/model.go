@@ -2,13 +2,9 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -16,12 +12,19 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/syawalqi/flare/agent"
-	"github.com/syawalqi/flare/config"
-	"github.com/syawalqi/flare/executor"
-	"github.com/syawalqi/flare/llm"
-	"github.com/syawalqi/flare/memory"
+	"github.com/syawalqi/oryx/agent"
+	"github.com/syawalqi/oryx/executor"
+	"github.com/syawalqi/oryx/llm"
+	"github.com/syawalqi/oryx/memory"
+	"github.com/syawalqi/oryx/state"
 )
+
+// borderOverhead is the total horizontal space consumed by the double border
+// plus padding: left border (1) + left padding (1) + right padding (1) + right border (1).
+const borderOverhead = 4
+
+// Version is set at build time via -ldflags.
+var version = "dev"
 
 type streamResultMsg struct {
 	result agent.StreamResult
@@ -35,7 +38,8 @@ type editorFinishedMsg struct {
 // autoScanMsg triggers a background system scan shortly after TUI starts.
 type autoScanMsg struct{}
 
-type model struct {
+// Model is the Bubbletea model for the ORYX chat TUI.
+type Model struct {
 	ready    bool
 	viewport viewport.Model
 	input    string
@@ -43,6 +47,7 @@ type model struct {
 	header   HeaderData
 
 	agent        *agent.Agent
+	db           *state.DB
 	systemPrompt string
 	configPath   string
 	memoryPath   string
@@ -62,9 +67,9 @@ type model struct {
 	loading         bool
 	streamCh        <-chan agent.StreamResult
 	streamContent   strings.Builder
-	streamReasoning strings.Builder // accumulated reasoning text
-	streamMsgs      []string        // lines emitted during streaming (tool calls shown here)
-	streamToolRun   bool            // currently executing a tool
+	streamReasoning strings.Builder
+	streamMsgs      []string
+	streamToolRun   bool
 
 	// Spinner
 	spinner spinner.Model
@@ -80,24 +85,49 @@ type model struct {
 	// Block regions for mouse click detection
 	blockRegions []BlockRegion
 
-	// Plan mode — read-only analysis mode with green theme
+	// Plan mode
 	planMode bool
 
-	// Conversation history passed to LLM across messages
+	// Conversation history passed to LLM across turns
 	history []llm.Message
 
-	// Build version for self-update checks
+	// Build version
 	version string
+
+	// Conversation list for /load command
+	savedConvs   []state.Conversation
+	showConvList bool
+	convCursor   int
+
+	// Plan-and-Execute state
+	currentPlan    *agent.Plan
+	planInProgress bool
 }
 
 // NewModel creates the chat TUI model.
-func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir, buildVersion string) tea.Model {
+// If initialHistory is provided (from --resume), it initializes the message
+// display with those messages.
+func NewModel(ag *agent.Agent, database *state.DB, systemPrompt, configPath, memoryPath, configDir, buildVersion string, initialHistory []llm.Message) tea.Model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED"))
 	s.Spinner = spinner.Line
 
-	return &model{
+	// Convert initial LLM history to ChatMessages for display
+	var msgs []ChatMessage
+	hasContent := false
+	for _, m := range initialHistory {
+		if m.Content != "" {
+			hasContent = true
+		}
+		msgs = append(msgs, ChatMessage{
+			Role:    string(m.Role),
+			Content: m.Content,
+		})
+	}
+
+	m := &Model{
 		agent:        ag,
+		db:           database,
 		systemPrompt: systemPrompt,
 		configPath:   configPath,
 		memoryPath:   memoryPath,
@@ -111,13 +141,26 @@ func NewModel(ag *agent.Agent, systemPrompt, configPath, memoryPath, configDir, 
 			ModelName: ag.ModelName(),
 		},
 		showSidebar: true,
-		showLogo:    true,
+		showLogo:    !hasContent,
 		version:     buildVersion,
+		messages:    msgs,
+		history:     initialHistory,
 	}
+
+	// If we resumed with history, skip the logo
+	if len(initialHistory) > 0 {
+		m.showLogo = false
+	}
+
+	return m
 }
 
-func (m *model) Init() tea.Cmd {
-	// Disable terminal flow control so Ctrl+S (sidebar toggle) isn't intercepted
+// GetHistory returns the current conversation history for saving.
+func (m *Model) GetHistory() []llm.Message {
+	return m.history
+}
+
+func (m *Model) Init() tea.Cmd {
 	exec.Command("stty", "-ixon").Run()
 	return tea.Batch(
 		m.spinner.Tick,
@@ -127,20 +170,20 @@ func (m *model) Init() tea.Cmd {
 	)
 }
 
-func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		chatW := msg.Width - 4 // 2 for border, 2 for padding
+		chatW := msg.Width - borderOverhead
 		if chatW < 40 {
 			chatW = 40
 		}
-		m.sidebarWidth = 28 // always allocate for header display
+		m.sidebarWidth = 28
 
 		if !m.ready {
 			m.viewport = viewport.New(chatW, msg.Height-5)
-			m.viewport.YPosition = 2 // header(1) + border top(1)
+			m.viewport.YPosition = 2
 			m.ready = true
 		} else {
 			m.viewport.Width = chatW
@@ -158,7 +201,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
-		// Also advance spinner when logo is showing (background animation)
 		if !m.loading {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
@@ -167,7 +209,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case autoScanMsg:
-		// Silent background scan — updates memory.md and sidebar without chat messages
 		exec := executor.New(30, 200, []string{})
 		if info, err := memory.Scan(context.Background(), exec); err == nil {
 			content := info.Render()
@@ -204,16 +245,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, nil
 
-	case updateResultMsg:
-		m.messages = append(m.messages, ChatMessage{
-			Role: "assistant", Content: msg.msg,
-		})
+	case convListMsg:
+		m.showConvList = msg.show
+		m.savedConvs = msg.convs
+		m.convCursor = 0
 		m.updateViewport()
-		m.viewport.GotoBottom()
 		return m, nil
 
+	case planEventMsg:
+		return m.handlePlanEvent(msg.event)
+
 	case tea.MouseMsg:
-		// Left-click on a block header toggles expand/collapse
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && !m.loading {
 			contentLine := msg.Y - m.viewport.YPosition + m.viewport.YOffset
 			for _, region := range m.blockRegions {
@@ -229,7 +271,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		// Forward mouse events (wheel scrolling etc.) to viewport
 		if !m.loading {
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
@@ -238,7 +279,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Forward to viewport when not loading (for smooth scrolling)
 	if !m.loading {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -247,7 +287,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) View() string {
+// --- rendering ---
+
+func (m *Model) View() string {
 	if !m.ready {
 		return "Loading..."
 	}
@@ -280,7 +322,11 @@ func (m *model) View() string {
 		}
 		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color(promptColor)).Render("> ")
 		cursor := dimmedStyle.Render("▎")
-		inputLine = prompt + m.input + cursor
+		if m.showConvList {
+			inputLine = dimmedStyle.Render("[/load] select conversation (↑↓, Enter to load, Esc to cancel)")
+		} else {
+			inputLine = prompt + m.input + cursor
+		}
 	}
 
 	// Build the content inside the border
@@ -315,8 +361,34 @@ func (m *model) View() string {
 
 // --- key handling ---
 
-func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+
+	// Conversation list navigation
+	if m.showConvList {
+		switch key {
+		case "up":
+			if m.convCursor > 0 {
+				m.convCursor--
+			}
+			m.updateViewport()
+			return m, nil
+		case "down":
+			if m.convCursor < len(m.savedConvs)-1 {
+				m.convCursor++
+			}
+			m.updateViewport()
+			return m, nil
+		case "enter":
+			return m.loadSelectedConversation()
+		case "esc":
+			m.showConvList = false
+			m.savedConvs = nil
+			m.updateViewport()
+			return m, nil
+		}
+		return m, nil
+	}
 
 	// Global: quit
 	if key == "ctrl+c" || key == "ctrl+d" {
@@ -332,18 +404,16 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.updateViewport()
 			return m, nil
 		}
-		// Allow scrolling during streaming
 		switch key {
 		case "up", "down", "pgup", "pgdown", "home", "end":
 			var cmd tea.Cmd
 			m.viewport, cmd = m.viewport.Update(msg)
 			return m, cmd
 		}
-		return m, nil // all other keys blocked during streaming
+		return m, nil
 	}
 
 	// --- Command palette mode (input starts with "/") ---
-	// Must come before viewport scroll keys so up/down navigate palette, not scroll
 	if strings.HasPrefix(m.input, "/") && !m.loading {
 		return m.handlePaletteKey(key, msg)
 	}
@@ -356,7 +426,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Toggle keys (ctrl+ combinations to avoid interfering with typing)
+	// Toggle keys
 	if key == "ctrl+r" && !m.loading {
 		m.expandReasoning = !m.expandReasoning
 		m.updateViewport()
@@ -367,93 +437,284 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 		return m, nil
 	}
-
-	// Toggle sidebar
 	if key == "ctrl+s" && !m.loading {
 		m.showSidebar = !m.showSidebar
-		m.reflowViewport()
+		m.updateViewport()
 		return m, nil
 	}
-
-	// Toggle plan mode (Ctrl+P)
 	if key == "ctrl+p" && !m.loading {
 		m.togglePlanMode()
 		return m, nil
 	}
 
-	// Enter — send message
-	if key == "enter" {
-		input := strings.TrimSpace(m.input)
-		if input == "" {
-			return m, nil
-		}
-		if strings.HasPrefix(input, "/") {
-			m.input = ""
-			return m, m.handleCommand(input)
-		}
-		m.input = ""
-		return m, m.startStream(input)
+	// Regular input
+	if key == "enter" && !m.loading && !m.showConvList {
+		return m.sendMessage()
 	}
-
-	// Backspace
 	if key == "backspace" && len(m.input) > 0 {
 		m.input = m.input[:len(m.input)-1]
+		m.updateViewport()
+		if strings.HasPrefix(m.input, "/") {
+			m.palette.Filter(m.input)
+		}
 		return m, nil
 	}
-
-	// Typed character
-	if len(key) == 1 {
+	if len(key) == 1 && !m.loading {
 		m.input += key
-		// Initialize palette immediately when "/" is first typed
-		if m.input == "/" {
-			m.palette.Filter("")
+		m.updateViewport()
+		if strings.HasPrefix(m.input, "/") {
+			m.palette.Filter(m.input)
 		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
-// --- streaming ---
+// loadSelectedConversation loads the conversation at convCursor into the chat.
+func (m *Model) loadSelectedConversation() (tea.Model, tea.Cmd) {
+	if m.convCursor < 0 || m.convCursor >= len(m.savedConvs) {
+		m.showConvList = false
+		return m, nil
+	}
+	conv := m.savedConvs[m.convCursor]
+	m.showConvList = false
+	m.savedConvs = nil
 
-func (m *model) startStream(input string) tea.Cmd {
-	m.loading = true
+	// Convert LLM messages to ChatMessages for display
+	m.messages = nil
+	m.history = nil
+	for _, lm := range conv.Messages {
+		if lm.Role == llm.RoleSystem {
+			continue
+		}
+		m.messages = append(m.messages, ChatMessage{
+			Role:    string(lm.Role),
+			Content: lm.Content,
+		})
+		m.history = append(m.history, lm)
+	}
+
+	m.showLogo = false
+	m.updateViewport()
+	m.viewport.GotoBottom()
+	return m, nil
+}
+
+func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
+	input := strings.TrimSpace(m.input)
+	m.input = ""
+	m.palette.Filter("")
+
+	if input == "" {
+		return m, nil
+	}
+
+	// Handle slash commands
+	if strings.HasPrefix(input, "/") {
+		switch input {
+		case "/save":
+			if m.db == nil {
+				m.messages = append(m.messages, ChatMessage{Role: "error", Content: "no state database available"})
+				m.updateViewport()
+				return m, nil
+			}
+			ts := fmt.Sprintf("chat-%d", time.Now().Unix())
+			if err := m.db.SaveConversation(ts, m.history, m.agent.ModelName()); err != nil {
+				m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("save failed: %v", err)})
+			} else {
+				m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: fmt.Sprintf("💾 Conversation saved as `%s` (%d messages)", ts, len(m.history))})
+			}
+			m.updateViewport()
+			return m, nil
+		case "/load":
+			if m.db == nil {
+				m.messages = append(m.messages, ChatMessage{Role: "error", Content: "no state database available"})
+				m.updateViewport()
+				return m, nil
+			}
+			return m, m.loadConversationList()
+		}
+	}
+
 	m.streamContent.Reset()
 	m.streamReasoning.Reset()
 	m.streamMsgs = nil
 	m.streamToolRun = false
-	m.showLogo = false // hide startup logo after first message
+	m.loading = true
 
 	ctx := context.Background()
 	userMsg := llm.Message{Role: llm.RoleUser, Content: input}
 
-	// Add to display and LLM history
 	m.messages = append(m.messages, ChatMessage{Role: "user", Content: input})
 	m.history = append(m.history, userMsg)
 
-	// Pass accumulated history so LLM sees full conversation across turns
 	msgs := make([]llm.Message, len(m.history))
 	copy(msgs, m.history)
 
-	// Start streaming in background
 	prompt := m.systemPrompt
 	if m.planMode {
 		prompt += "\n\n⚠️ PLAN MODE ACTIVE — You can ONLY read files (read_file) and search logs (search_logs). " +
 			"You CANNOT run commands, write files, or modify services. " +
 			"Do NOT attempt destructive actions — they will be blocked. Analyze and suggest changes only."
 	}
+	// If plan mode is active, use Plan-and-Execute
+	if m.planMode {
+		return m.startPlan(input)
+	}
+
 	ch, err := m.agent.RunStream(ctx, prompt, msgs)
 	if err != nil {
 		m.loading = false
 		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("stream error: %v", err)})
 		m.updateViewport()
-		return nil
+		return m, nil
 	}
 	m.streamCh = ch
 
-	return m.pollStream()
+	return m, m.pollStream()
 }
 
-func (m *model) pollStream() tea.Cmd {
+// startPlan kicks off Plan-and-Execute mode. It creates a plan from the
+// user's input and executes it step by step.
+func (m *Model) startPlan(input string) (tea.Model, tea.Cmd) {
+	m.streamContent.Reset()
+	m.streamReasoning.Reset()
+	m.streamMsgs = nil
+	m.streamToolRun = false
+	m.loading = true
+	m.planInProgress = true
+	m.currentPlan = nil
+
+	ctx := context.Background()
+
+	return m, func() tea.Msg {
+		planCh, err := m.agent.RunPlanStream(ctx, m.systemPrompt, input)
+		if err != nil {
+			return planEventMsg{event: agent.PlanEvent{Error: err.Error()}}
+		}
+		// Drain the plan channel and forward events to the TUI
+		for evt := range planCh {
+			// Send planEventMsg via the TUI's message loop
+			// We need to return these one at a time via the poll mechanism
+			// For now, collect the final result
+			if evt.Done {
+				m.loading = false
+				m.planInProgress = false
+				return planEventMsg{event: evt}
+			}
+			if evt.Error != "" {
+				m.loading = false
+				m.planInProgress = false
+				return planEventMsg{event: evt}
+			}
+			if evt.Plan != nil {
+				m.currentPlan = evt.Plan
+			}
+			if evt.StepUpdate != nil {
+				// Update the plan in-place
+				if m.currentPlan != nil && evt.StepUpdate.ID > 0 && evt.StepUpdate.ID <= len(m.currentPlan.Steps) {
+					m.currentPlan.Steps[evt.StepUpdate.ID-1] = *evt.StepUpdate
+				}
+			}
+		}
+		m.loading = false
+		m.planInProgress = false
+		return planEventMsg{event: agent.PlanEvent{Done: true}}
+	}
+}
+
+// handlePlanEvent processes a plan execution event from the agent.
+func (m *Model) handlePlanEvent(evt agent.PlanEvent) (tea.Model, tea.Cmd) {
+	if evt.Error != "" {
+		m.messages = append(m.messages, ChatMessage{Role: "error", Content: "⚠ " + evt.Error})
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	if evt.Plan != nil {
+		m.currentPlan = evt.Plan
+		// Show the plan as an assistant message
+		var b strings.Builder
+		b.WriteString("📋 **Plan created:**\n\n")
+		for _, step := range evt.Plan.Steps {
+			b.WriteString(fmt.Sprintf("  %d. %s\n", step.ID, step.Description))
+		}
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: b.String(),
+		})
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	if evt.StepUpdate != nil {
+		step := evt.StepUpdate
+		var statusSym string
+		switch step.Status {
+		case "running":
+			statusSym = "▶"
+		case "done":
+			statusSym = "✅"
+		case "failed":
+			statusSym = "❌"
+		default:
+			statusSym = "⏳"
+		}
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: fmt.Sprintf("%s Step %d: %s", statusSym, step.ID, step.Description),
+		})
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	if evt.StepResult != "" {
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: evt.StepResult,
+		})
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	if evt.Done {
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: "✅ Plan execution complete.",
+		})
+		m.loading = false
+		m.planInProgress = false
+		m.updateViewport()
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// loadConversationList fetches saved conversations from the DB and displays them.
+func (m *Model) loadConversationList() tea.Cmd {
+	return func() tea.Msg {
+		convs, err := m.db.ListConversations()
+		if err != nil {
+			return convListMsg{show: true}
+		}
+		return convListMsg{show: len(convs) > 0, convs: convs}
+	}
+}
+
+// convListMsg carries the conversation list for /load display.
+type convListMsg struct {
+	show  bool
+	convs []state.Conversation
+}
+
+func (m *Model) pollStream() tea.Cmd {
 	return func() tea.Msg {
 		result, ok := <-m.streamCh
 		if !ok {
@@ -463,7 +724,7 @@ func (m *model) pollStream() tea.Cmd {
 	}
 }
 
-func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cmd) {
+func (m *Model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cmd) {
 	if result.Err != nil {
 		m.loading = false
 		m.streamCh = nil
@@ -490,11 +751,9 @@ func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 
 	if result.ToolResult != nil {
 		m.streamToolRun = true
-		// One-line compact summary per tool result
 		tr := result.ToolResult
 		outputLines := strings.Split(strings.TrimRight(tr.Output, "\n"), "\n")
 		n := len(outputLines)
-		// Extract duration/exit code from first line if present
 		summary := fmt.Sprintf("  ◈ %s ✓", tr.Name)
 		for _, l := range outputLines {
 			if strings.HasPrefix(l, "exit code:") || strings.HasPrefix(l, "duration:") {
@@ -518,13 +777,12 @@ func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 			line := fmt.Sprintf("  ◈ %s(%s)", tc.Function.Name, args)
 			m.streamMsgs = append(m.streamMsgs, line)
 		}
-		// Keep only last 3 tool entries in viewport during streaming
 		if len(m.streamMsgs) > 3 {
 			m.streamMsgs = m.streamMsgs[len(m.streamMsgs)-3:]
 		}
 		m.updateViewport()
 		m.viewport.GotoBottom()
-		return m, m.pollStream()
+		return m, tea.Batch(m.pollStream(), m.spinner.Tick)
 	}
 
 	if result.Done {
@@ -536,443 +794,55 @@ func (m *model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 		return m, nil
 	}
 
-	// No relevant field — keep polling
-	return m, m.pollStream()
+	return m, tea.Batch(m.pollStream(), m.spinner.Tick)
 }
 
-func (m *model) finalizeStream() {
-	content := m.streamContent.String()
-	reasoning := m.streamReasoning.String()
-	toolCalls := make([]string, len(m.streamMsgs))
-	copy(toolCalls, m.streamMsgs)
-	if content != "" || reasoning != "" || len(toolCalls) > 0 {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "assistant", Content: content, Reasoning: reasoning, ToolCalls: toolCalls,
+func (m *Model) finalizeStream() {
+	content := strings.TrimRight(m.streamContent.String(), "\n")
+	reasoning := strings.TrimRight(m.streamReasoning.String(), "\n")
+
+	if content != "" || reasoning != "" || len(m.streamMsgs) > 0 {
+		msg := ChatMessage{
+			Role:      "assistant",
+			Content:   content,
+			Reasoning: reasoning,
+			ToolCalls: m.streamMsgs,
+		}
+		if m.streamMsgs != nil {
+			// Copy to avoid aliasing
+			msg.ToolCalls = make([]string, len(m.streamMsgs))
+			copy(msg.ToolCalls, m.streamMsgs)
+		}
+		m.messages = append(m.messages, msg)
+		// Add to LLM history
+		m.history = append(m.history, llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: content,
 		})
-		// Accumulate in LLM history for conversation continuity
-		m.history = append(m.history, llm.Message{Role: llm.RoleAssistant, Content: content})
-	}
-	m.streamContent.Reset()
-	m.streamReasoning.Reset()
-	m.streamMsgs = nil
-}
-
-// --- command palette ---
-
-func (m *model) handlePaletteKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch key {
-	case "up":
-		m.palette.CursorUp()
-		return m, nil
-
-	case "down":
-		m.palette.CursorDown()
-		return m, nil
-
-	case "tab":
-		if sel := m.palette.Selected(); sel != "" {
-			m.input = sel + " "
-			m.palette.Filter("")
-		}
-		return m, nil
-
-	case "enter":
-		if sel := m.palette.Selected(); sel != "" {
-			// Execute the selected command immediately
-			m.input = ""
-			m.palette.Filter("")
-			return m, m.handleCommand(sel)
-		}
-		// Nothing selected — execute input as-is
-		input := strings.TrimSpace(m.input)
-		m.input = ""
-		if input != "" {
-			return m, m.handleCommand(input)
-		}
-		return m, nil
-
-	case "esc":
-		m.input = ""
-		return m, nil
-
-	case "backspace":
-		if len(m.input) > 1 {
-			m.input = m.input[:len(m.input)-1]
-			m.palette.Filter(strings.TrimPrefix(m.input, "/"))
-		} else {
-			// Only "/" left — clear entirely
-			m.input = ""
-		}
-		return m, nil
-
-	default:
-		// Regular character — append and refilter
-		if len(key) == 1 {
-			m.input += key
-			m.palette.Filter(strings.TrimPrefix(m.input, "/"))
-		}
-		return m, nil
 	}
 }
 
-// --- commands ---
+// --- rendering helpers ---
 
-func (m *model) handleCommand(input string) tea.Cmd {
-	parts := strings.Fields(input)
-	cmd := parts[0]
-
-	switch cmd {
-	case "/quit":
-		return tea.Quit
-
-	case "/clear":
-		m.messages = nil
-		m.history = nil
-		m.updateViewport()
-		return nil
-
-	case "/help":
-		m.messages = append(m.messages, ChatMessage{
-			Role: "assistant",
-			Content: "Commands:\n" +
-				"  /clear           Clear chat\n" +
-				"  /config          Show current config\n" +
-				"  /config edit     Edit config in nano/vim\n" +
-				"  /memory          Show server context (memory.md)\n" +
-				"  /memory edit     Edit memory in nano/vim\n" +
-				"  /model <id>      Change model (e.g. /model deepseek/deepseek-v4-flash)\n" +
-				"  /plan            Toggle plan mode (read-only analysis)\n" +
-				"  /save            Save conversation to /tmp/\n" +
-				"  /scan            Rescan server and update memory\n" +
-				"  /skill           List FLARE's built-in abilities\n" +
-				"  /help            Show this help\n" +
-				"  /quit            Exit\n" +
-				"  /update          Check for updates\n\n" +
-				"Keys:\n" +
-				"  ↑/↓      Scroll\n" +
-				"  PgUp/Dn  Page scroll\n" +
-				"  Ctrl+R    Toggle reasoning expand/collapse\n" +
-				"  Ctrl+T    Toggle tool output expand/collapse\n" +
-				"  Ctrl+S    Toggle sidebar\n" +
-				"  Ctrl+P    Toggle plan mode\n" +
-				"  Enter    Send message",
-		})
-		m.updateViewport()
-		m.viewport.GotoBottom()
-		return nil
-
-	case "/config":
-		if len(parts) > 1 && parts[1] == "edit" {
-			return m.editFile(m.configPath)
-		}
-		return m.showConfig()
-
-	case "/memory":
-		if len(parts) > 1 && parts[1] == "edit" {
-			return m.editFile(m.memoryPath)
-		}
-		return m.showMemory()
-
-	case "/model":
-		return m.changeModel(parts)
-
-	case "/scan":
-		return m.rescanServer()
-
-	case "/plan":
-		m.togglePlanMode()
-		return nil
-
-	case "/skill":
-		m.messages = append(m.messages, ChatMessage{
-			Role: "assistant",
-			Content: "FLARE's built-in abilities:\n" +
-				"  • Run shell commands on the server\n" +
-				"  • Read/write files\n" +
-				"  • Manage systemd services\n" +
-				"  • Search journal logs\n" +
-				"  • Health monitoring (daemon mode)\n" +
-				"  • Webhook alerts\n\n" +
-				"New abilities can be added to the flare-ultimate skill in Hermes.",
-		})
-		m.updateViewport()
-		m.viewport.GotoBottom()
-		return nil
-
-	case "/update":
-		return m.selfUpdate()
-
-	case "/save":
-		return m.saveConversation()
-
-	default:
-		m.messages = append(m.messages, ChatMessage{
-			Role:    "error",
-			Content: fmt.Sprintf("unknown command: %s", cmd),
-		})
-		m.updateViewport()
-		return nil
-	}
-}
-
-func (m *model) showConfig() tea.Cmd {
-	cfg, err := config.Load(m.configPath)
-	if err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("read config: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-	masked := cfg.APIKey
-	if len(masked) > 8 {
-		masked = masked[:4] + "…" + masked[len(masked)-4:]
-	} else if masked != "" {
-		masked = "***"
-	}
-	m.messages = append(m.messages, ChatMessage{
-		Role: "assistant",
-		Content: fmt.Sprintf("📋 Config summary:\n  Provider: %s\n  Model: %s\n  API Key: %s\n  Max iterations: %d\n\nEdit with `/config edit` to change values.", cfg.Provider, cfg.Model, masked, cfg.Agent.MaxIterations),
-	})
-	m.updateViewport()
-	m.viewport.GotoBottom()
-	return nil
-}
-
-func (m *model) showMemory() tea.Cmd {
-	data, err := os.ReadFile(m.memoryPath)
-	if err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("read memory: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-
-	size := len(data)
-
-	m.messages = append(m.messages, ChatMessage{
-		Role: "assistant",
-		Content: fmt.Sprintf("🧠 Server memory: %d bytes\nEdit with `/memory edit` to update server context.", size),
-	})
-	m.updateViewport()
-	m.viewport.GotoBottom()
-	return nil
-}
-
-func (m *model) changeModel(parts []string) tea.Cmd {
-	if len(parts) < 2 {
-		// Show current model
-		m.messages = append(m.messages, ChatMessage{
-			Role:    "assistant",
-			Content: fmt.Sprintf("🤖 Current model: **%s**\nUsage: `/model <model-id>`\nExample: `/model deepseek/deepseek-v4-flash`", m.agent.ModelName()),
-		})
-		m.updateViewport()
-		m.viewport.GotoBottom()
-		return nil
-	}
-
-	newModel := parts[1]
-
-	// Update config file
-	cfg, err := config.Load(m.configPath)
-	if err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("load config: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-	cfg.Model = newModel
-	cfg.DaemonModel = newModel
-	if err := cfg.Save(m.configPath); err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("save config: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-
-	// Update agent and header
-	m.agent.SetModel(newModel)
-	m.header.Model = newModel
-	m.sidebarData.ModelName = newModel
-
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: fmt.Sprintf("✓ Model changed to: %s\nNew chat sessions will use this model.", newModel),
-	})
-	m.updateViewport()
-	m.viewport.GotoBottom()
-	return nil
-}
-
-func (m *model) rescanServer() tea.Cmd {
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: "🔄 Scanning server... this may take a moment.",
-	})
-	m.updateViewport()
-
-	exec := executor.New(30, 200, []string{})
-	info, err := memory.Scan(context.Background(), exec)
-	if err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("scan failed: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-
-	content := info.Render()
-	if err := os.WriteFile(m.memoryPath, []byte(content), 0644); err != nil {
-		m.messages = append(m.messages, ChatMessage{
-			Role: "error", Content: fmt.Sprintf("save memory: %v", err),
-		})
-		m.updateViewport()
-		return nil
-	}
-
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: fmt.Sprintf("✓ Server scan complete — %d bytes written to memory.", len(content)),
-	})
-
-	// Update sidebar data
-	m.sidebarData.UpdateFromScan(info)
-
-	m.updateViewport()
-	m.viewport.GotoBottom()
-	return nil
-}
-
-func (m *model) editFile(path string) tea.Cmd {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "nano"
-	}
-
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: fmt.Sprintf("📝 Opening %s in %s...\nSave & exit to return.", path, editor),
-	})
-	m.loading = true
-	m.updateViewport()
-
-	c := exec.Command(editor, path)
-	return tea.ExecProcess(c, func(err error) tea.Msg {
-		return editorFinishedMsg{path: path, err: err}
-	})
-}
-
-func (m *model) selfUpdate() tea.Cmd {
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: "🔄 Checking for updates...",
-	})
-	m.updateViewport()
-
-	return func() tea.Msg {
-		// Fetch latest release from GitHub
-		resp, err := http.Get("https://api.github.com/repos/syawalqi/flare/releases/latest")
-		if err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("update check failed: %w", err)}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("update check: GitHub returned %d", resp.StatusCode)}
-		}
-
-		var release struct {
-			TagName string `json:"tag_name"`
-			Assets  []struct {
-				Name               string `json:"name"`
-				BrowserDownloadURL string `json:"browser_download_url"`
-			} `json:"assets"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("update parse: %w", err)}
-		}
-
-		latest := release.TagName
-		current := m.version
-
-		if current == "dev" || current == latest {
-			msg := fmt.Sprintf("✓ FLARE is up to date (%s).", current)
-			return updateResultMsg{msg: msg}
-		}
-
-		// Find the right binary for this system
-		osName := runtime.GOOS
-		arch := runtime.GOARCH
-		assetName := fmt.Sprintf("flare-%s-%s", osName, arch)
-
-		var downloadURL string
-		for _, a := range release.Assets {
-			if a.Name == assetName {
-				downloadURL = a.BrowserDownloadURL
-				break
-			}
-		}
-
-		if downloadURL == "" {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("no binary for %s/%s", osName, arch)}
-		}
-
-		// Download new binary
-		resp, err = http.Get(downloadURL)
-		if err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("download failed: %w", err)}
-		}
-		defer resp.Body.Close()
-
-		newBin, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("read download: %w", err)}
-		}
-
-		// Find current binary path and replace it
-		selfPath, err := os.Executable()
-		if err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("cannot find self: %w", err)}
-		}
-
-		// Write to temp file first, then rename
-		tmpPath := selfPath + ".new"
-		if err := os.WriteFile(tmpPath, newBin, 0755); err != nil {
-			return editorFinishedMsg{path: "", err: fmt.Errorf("write temp: %w", err)}
-		}
-
-		if err := os.Rename(tmpPath, selfPath); err != nil {
-			os.Remove(tmpPath)
-			return editorFinishedMsg{path: "", err: fmt.Errorf("replace binary: %w", err)}
-		}
-
-		msg := fmt.Sprintf("✓ Updated FLARE %s → %s. Restart to use.", current, latest)
-		return updateResultMsg{msg: msg}
-	}
-}
-
-// updateResultMsg carries the result of a self-update check.
-type updateResultMsg struct {
-	msg string
-}
-
-// --- rendering ---
-
-func (m *model) updateViewport() {
+func (m *Model) updateViewport() {
 	chatW := m.viewport.Width
 	if chatW < 1 {
-		chatW = m.width - 4
+		chatW = m.width - borderOverhead
 	}
-	content := renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, chatW, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
+
+	var content string
+	if m.showConvList {
+		content = renderConvList(m.savedConvs, m.convCursor)
+	} else {
+		content = renderMessages(m.messages, m.streamContent.String(), m.streamReasoning.String(), m.streamMsgs, chatW, m.expandReasoning, m.expandTools, m.showLogo, m.viewport.Height)
+	}
+
 	m.viewport.SetContent(content)
 	m.blockRegions = detectBlockRegions(content)
 }
 
-func (m *model) reflowViewport() {
-	chatW := m.width - 4
+func (m *Model) reflowViewport() {
+	chatW := m.width - borderOverhead
 	if chatW < 40 {
 		chatW = 40
 	}
@@ -982,10 +852,7 @@ func (m *model) reflowViewport() {
 	m.updateViewport()
 }
 
-// togglePlanMode switches between normal and read-only plan mode.
-// The agent blocks destructive tools, the system prompt is updated,
-// and the UI turns green.
-func (m *model) togglePlanMode() {
+func (m *Model) togglePlanMode() {
 	m.planMode = !m.planMode
 	m.agent.SetPlanMode(m.planMode)
 
@@ -1002,8 +869,8 @@ func (m *model) togglePlanMode() {
 }
 
 // saveConversation writes the conversation to a timestamped file.
-func (m *model) saveConversation() tea.Cmd {
-	path := fmt.Sprintf("/tmp/flare-chat-%s.txt", time.Now().Format("20060102-150405"))
+func (m *Model) saveConversation() tea.Cmd {
+	path := fmt.Sprintf("/tmp/oryx-chat-%s.txt", time.Now().Format("20060102-150405"))
 	var b strings.Builder
 	for i, msg := range m.messages {
 		b.WriteString(fmt.Sprintf("[%d] %s:\n", i+1, msg.Role))
@@ -1028,4 +895,32 @@ func (m *model) saveConversation() tea.Cmd {
 	m.updateViewport()
 	m.viewport.GotoBottom()
 	return nil
+}
+
+// renderConvList shows saved conversations for /load selection.
+func renderConvList(convs []state.Conversation, cursor int) string {
+	if len(convs) == 0 {
+		return dimmedStyle.Render("No saved conversations found.\n\nStart one with `oryx chat` and use /save to store it.")
+	}
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#7C3AED")).Bold(true).Render("Saved Conversations\n\n"))
+	for i, conv := range convs {
+		cursorSym := " "
+		if i == cursor {
+			cursorSym = "▸"
+		}
+		summary := conv.Summary
+		if summary == "" {
+			summary = "(no messages)"
+		}
+		ts := conv.UpdatedAt.Format("Jan 02 15:04")
+		n := len(conv.Messages)
+		line := fmt.Sprintf("%s [%s] %s (%d msgs) — %s", cursorSym, ts, conv.Model, n, summary)
+		if i == cursor {
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Render(line) + "\n")
+		} else {
+			b.WriteString(dimmedStyle.Render(line) + "\n")
+		}
+	}
+	return b.String()
 }

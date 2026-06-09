@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/syawalqi/flare/llm"
+	"github.com/syawalqi/oryx/llm"
 )
 
 // --- steps ---
@@ -262,7 +262,7 @@ func renderLogo() string {
   ██  █ █ █  ██
    ██       ██
     ▀▀▀▀▀▀▀▀▀`
-	return logoStyle.Render(eye) + "\n" + titleStyle.Render("⚡ Flare Setup")
+	return logoStyle.Render(eye) + "\n" + titleStyle.Render("⚡ ORYX Setup")
 }
 
 // renderFooter shows keyboard shortcuts for the current step.

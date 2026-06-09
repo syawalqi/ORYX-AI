@@ -2,32 +2,80 @@ package tui
 
 import (
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/syawalqi/oryx/agent"
 )
 
+// CmdBarItem describes a slash command shown in the palette and command bar.
 type CmdBarItem struct {
 	Label string
-	Key   string
 	Desc  string
 }
 
+// CmdBarItems lists all available slash commands.
 var CmdBarItems = []CmdBarItem{
-	{Label: "/clear", Key: "clear chat", Desc: "Clear chat history"},
-	{Label: "/config", Key: "show config", Desc: "View or edit config (/config edit)"},
-	{Label: "/memory", Key: "show memory", Desc: "View or edit server memory (/memory edit)"},
-	{Label: "/model", Key: "change model", Desc: "Switch AI model (/model <name>)"},
-	{Label: "/plan", Key: "toggle plan mode", Desc: "Toggle read-only analysis mode"},
-	{Label: "/save", Key: "save chat", Desc: "Save conversation to /tmp/"},
-	{Label: "/scan", Key: "rescan server", Desc: "Rescan system and update context"},
-	{Label: "/skill", Key: "list abilities", Desc: "List FLARE's built-in skills"},
-	{Label: "/help", Key: "show help", Desc: "Show all commands and usage"},
-	{Label: "/quit", Key: "exit", Desc: "Exit FLARE"},
-	{Label: "/update", Key: "self-update", Desc: "Check and apply updates"},
+	{Label: "/save", Desc: "save conversation to state DB"},
+	{Label: "/load", Desc: "load a saved conversation"},
+	{Label: "/plan", Desc: "toggle plan mode (read-only)"},
+	{Label: "/help", Desc: "show key bindings"},
+	{Label: "/exit", Desc: "quit ORYX"},
 }
 
+// RenderCmdBar builds the footer command bar showing available shortcuts.
 func RenderCmdBar(width int) string {
-	var parts []string
-	for _, item := range CmdBarItems {
-		parts = append(parts, dimmedStyle.Render(item.Label))
+	items := []string{
+		"Ctrl+P plan",
+		"Ctrl+R reasoning",
+		"Ctrl+T tools",
+		"Ctrl+S sidebar",
+		"/ help",
 	}
-	return cmdBarStyle.Width(width).Render(strings.Join(parts, " │ "))
+	sep := dimmedStyle.Render(" • ")
+	return lipgloss.NewStyle().
+		Width(width).
+		MaxWidth(width).
+		Render(dimmedStyle.Render(" " + strings.Join(items, sep)))
+}
+
+// handlePaletteKey processes keys when the command palette is active.
+func (m *Model) handlePaletteKey(key string, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up":
+		m.palette.CursorUp()
+		return m, nil
+	case "down":
+		m.palette.CursorDown()
+		return m, nil
+	case "enter":
+		selected := m.palette.Selected()
+		if selected != "" {
+			m.input = selected + " "
+		}
+		m.palette.Filter(m.input)
+		m.updateViewport()
+		return m, nil
+	case "tab":
+		selected := m.palette.Selected()
+		if selected != "" {
+			m.input = selected + " "
+			m.palette.Filter(m.input)
+			m.updateViewport()
+		}
+		return m, nil
+	case "esc":
+		m.input = ""
+		m.palette.Filter("")
+		m.updateViewport()
+		return m, nil
+	default:
+		// Regular character input is already handled by handleKey
+		return m, nil
+	}
+}
+
+// planEventMsg carries a plan execution event for the TUI.
+type planEventMsg struct {
+	event agent.PlanEvent
 }

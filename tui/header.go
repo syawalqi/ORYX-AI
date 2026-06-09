@@ -23,7 +23,7 @@ func RenderHeader(data HeaderData, width int) string {
 		ms = planHeaderModelStyle
 	}
 
-	left := hs.Render(" Flare ") +
+	left := hs.Render(" ORYX ") +
 		ms.Render(fmt.Sprintf("[%s]", data.Model))
 
 	// Server info in dimmed style between model and health indicator

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/syawalqi/flare/memory"
+	"github.com/syawalqi/oryx/memory"
 )
 
 // SidebarData holds server and session info for the right-side panel.

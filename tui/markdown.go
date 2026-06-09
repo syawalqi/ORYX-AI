@@ -2,41 +2,27 @@ package tui
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/charmbracelet/glamour"
 )
 
-var (
-	mdRenderer     *glamour.TermRenderer
-	mdRendererOnce sync.Once
-)
-
-// getRenderer returns the cached glamour renderer, creating it once.
-func getRenderer() *glamour.TermRenderer {
-	mdRendererOnce.Do(func() {
-		r, err := glamour.NewTermRenderer(
-			glamour.WithStandardStyle("dark"),
-			glamour.WithWordWrap(200), // generous width; terminal handles actual wrapping
-		)
-		if err != nil {
-			// Fallback: renderer will be nil, renderMarkdown falls back to plain text
-			return
-		}
-		mdRenderer = r
-	})
-	return mdRenderer
-}
-
 // renderMarkdown converts Markdown text to ANSI-styled terminal output.
-// The renderer is cached at first call, not recreated on every call.
+// A new renderer is created per-call with the correct width so lines
+// never exceed the available viewport space.
 func renderMarkdown(content string, width int) string {
 	if strings.TrimSpace(content) == "" {
 		return ""
 	}
 
-	r := getRenderer()
-	if r == nil {
+	if width < 10 {
+		width = 10
+	}
+
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dark"),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
 		return wrapText(content, width)
 	}
 
