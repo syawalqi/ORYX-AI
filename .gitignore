@@ -1,4 +1,16 @@
-flare
-*.test
-coverage.out
+# Binaries
+/oryx
+/oryx.exe
+
+# Editor
+.idea/
 .vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+config.yaml
