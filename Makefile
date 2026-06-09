@@ -1,16 +1,16 @@
 .PHONY: build clean test run fmt
 
 build:
-	go build -o flare .
+	go build -o oryx .
 
 clean:
-	rm -f flare
+	rm -f oryx
 
 test:
 	go test ./...
 
 run: build
-	./flare chat
+	./oryx chat
 
 fmt:
 	go fmt ./...
