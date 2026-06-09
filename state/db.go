@@ -1,4 +1,4 @@
-// Package state provides persistent storage for Flare daemon state.
+// Package state provides persistent storage for ORYX daemon state.
 package state
 
 import (
@@ -72,6 +72,14 @@ func (d *DB) init() error {
 			return err
 		}
 		_, err = tx.CreateBucketIfNotExists([]byte("fix_tickets"))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte("tool_log"))
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte("conversations"))
 		return err
 	})
 }
