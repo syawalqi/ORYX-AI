@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-REPO="syawalqi/flare"
-BIN_NAME="flare"
+REPO="syawalqi/oryx"
+BIN_NAME="oryx"
 INSTALL_DIR="/usr/local/bin"
 
 # Detect OS and architecture
@@ -23,7 +23,7 @@ esac
 ASSET="flare-${OS}-${ARCH}"
 VERSION="v1.0.0"
 
-echo "📦 Downloading FLARE ${VERSION} for ${OS}/${ARCH}..."
+echo "📦 Downloading ORYX ${VERSION} for ${OS}/${ARCH}..."
 
 # Download the binary from GitHub releases
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
@@ -39,6 +39,6 @@ fi
 chmod +x "/tmp/${ASSET}"
 sudo mv "/tmp/${ASSET}" "${INSTALL_DIR}/${BIN_NAME}"
 
-echo "✅ FLARE ${VERSION} installed to ${INSTALL_DIR}/${BIN_NAME}"
+echo "✅ ORYX ${VERSION} installed to ${INSTALL_DIR}/${BIN_NAME}"
 echo ""
-echo "Run 'flare setup' to configure your API key, then 'flare chat' to start."
+echo "Run 'oryx setup' to configure your API key, then 'oryx chat' to start."

@@ -1,4 +1,4 @@
-# Flare Plugins
+# ORYX Plugins
 
 Place executable scripts in this directory to add custom health checks.
 

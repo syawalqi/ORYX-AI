@@ -1,5 +1,5 @@
 [Unit]
-Description=Flare Daemon — 24/7 VPS monitoring agent
+Description=ORYX Daemon — 24/7 VPS monitoring agent
 After=network.target
 
 [Service]

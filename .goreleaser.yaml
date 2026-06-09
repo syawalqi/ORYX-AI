@@ -1,6 +1,6 @@
 # Build configuration
 builds:
-  - binary: flare
+  - binary: oryx
     main: .
     goos:
       - linux
