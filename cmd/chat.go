@@ -29,8 +29,11 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 	defer db.Close()
 
 	// Create agent with budget tracking and audit logging
+	reflexCfg := agent.DefaultReflexionConfig()
+	reflexCfg.Enabled = true
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations,
-		agent.WithBudget(cfg.Agent.MaxIterations, 0, 0),
+		agent.WithBudget(cfg.Agent.MaxIterations, 0, cfg.Agent.MaxCost),
+		agent.WithReflexion(reflexCfg),
 		agent.WithAudit(func(tool, args, result string, success bool, duration string, iteration int) {
 			db.AppendToolLog(tool, args, result, success, duration, iteration)
 		}),
@@ -118,6 +121,12 @@ func getProvider(cfg *config.Config) llm.Provider {
 			key = os.Getenv("ANTHROPIC_API_KEY")
 		}
 		return llm.NewAnthropicProvider(key)
+	case "ollama":
+		baseURL := os.Getenv("OLLAMA_BASE_URL")
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		return llm.NewOllamaProvider(baseURL)
 	default:
 		return llm.NewOpenAIProvider(cfg.Provider, "https://openrouter.ai/api/v1", cfg.APIKey)
 	}

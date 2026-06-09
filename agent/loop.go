@@ -29,10 +29,18 @@ type Agent struct {
 	budget      *BudgetTracker
 	auditFn     AuditFunc
 	planMode    bool
+	reflexion   ReflexionConfig
 }
 
 // AgentOption configures the Agent.
 type AgentOption func(*Agent)
+
+// WithReflexion enables self-critique (Reflexion) on agent responses.
+func WithReflexion(cfg ReflexionConfig) AgentOption {
+	return func(a *Agent) {
+		a.reflexion = cfg
+	}
+}
 
 // WithBudget sets budget limits. Zero values mean unlimited.
 func WithBudget(maxIter, maxTokens int, maxCost float64) AgentOption {
@@ -183,6 +191,15 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 			}
 
 			if len(toolCalls) == 0 {
+				// Reflexion: self-critique before final answer
+				if a.reflexion.Enabled {
+					revisedContent, didRevise, refErr := a.RunReflexion(ctx, fullMsgs)
+					if refErr == nil && didRevise && revisedContent != "" {
+						// Send the revised content as replacement tokens
+						ch <- StreamResult{Reasoning: "🤖 Self-critique: revised response for quality"}
+						ch <- StreamResult{Token: revisedContent}
+					}
+				}
 				ch <- StreamResult{Done: true}
 				return
 			}

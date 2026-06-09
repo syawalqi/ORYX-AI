@@ -32,6 +32,12 @@ type Definition struct {
 	// MaxCalls limits how many times this tool can be called in one session.
 	// 0 means unlimited.
 	MaxCalls int
+
+	// OutputSchema is an optional JSON Schema that tool output is validated against.
+	// If set, the output must validate or it's flagged to the LLM with a warning.
+	// Use this to catch malformed returns (e.g., tools that return error text
+	// when the caller expected structured data).
+	OutputSchema map[string]interface{}
 }
 
 // Registry manages a collection of tool definitions and tracks their usage.
@@ -120,7 +126,44 @@ func (r *Registry) Execute(ctx context.Context, name string, args json.RawMessag
 	if err != nil {
 		return "", fmt.Errorf("tool error: %w", err)
 	}
+
+	// Validate output against schema if defined
+	if def.OutputSchema != nil {
+		if validationNote := validateOutput(output, def.OutputSchema); validationNote != "" {
+			// Append validation warning to output so LLM sees it
+			output = output + "\n\n⚠️ OUTPUT WARNING: " + validationNote
+		}
+	}
+
 	return output, nil
+}
+
+// validateOutput checks if the tool output matches the expected schema.
+// Returns an empty string if valid, or a description of the issue.
+// This is a best-effort validation — it only checks top-level structure
+// to catch obvious mismatches (error text vs expected JSON, etc.).
+func validateOutput(output string, schema map[string]interface{}) string {
+	schemaType, _ := schema["type"].(string)
+	if schemaType == "object" || schemaType == "array" {
+		// Expected structured data — check if output is valid JSON
+		var test interface{}
+		if err := json.Unmarshal([]byte(output), &test); err != nil {
+			return fmt.Sprintf("expected JSON output (%s) but got non-JSON: %.80s", schemaType, output)
+		}
+		// Check top-level type match
+		switch schemaType {
+		case "object":
+			if _, isObj := test.(map[string]interface{}); !isObj {
+				return "expected JSON object but got " + fmt.Sprintf("%T", test)
+			}
+		case "array":
+			if _, isArr := test.([]interface{}); !isArr {
+				return "expected JSON array but got " + fmt.Sprintf("%T", test)
+			}
+		}
+	}
+	// No schema or non-structural type — pass through
+	return ""
 }
 
 // CallCount returns how many times a tool has been called this session.
