@@ -4,40 +4,68 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path"
+	"math/rand"
 	"strings"
+	"time"
 
-	"github.com/syawalqi/flare/executor"
-	"github.com/syawalqi/flare/llm"
+	"github.com/syawalqi/oryx/executor"
+	"github.com/syawalqi/oryx/llm"
+	"github.com/syawalqi/oryx/tools"
 )
 
-type ToolHandler func(ctx context.Context, args json.RawMessage) (string, error)
+// AuditFunc is called after every tool execution for audit logging.
+// Args is the raw JSON arguments string (truncated for safety).
+// Result is the output string (first 200 chars).
+// Duration is the execution time.
+type AuditFunc func(tool, args, result string, success bool, duration string, iteration int)
 
 type Agent struct {
-	provider     llm.Provider
-	exec         *executor.Executor
-	model        string
-	maxTokens    int
-	temperature  float64
-	maxIter      int
-	tools        []llm.ToolDef
-	handlers     map[string]ToolHandler
-	planMode     bool
+	provider    llm.Provider
+	exec        *executor.Executor
+	registry    *tools.Registry
+	model       string
+	maxTokens   int
+	temperature float64
+	budget      *BudgetTracker
+	auditFn     AuditFunc
+	planMode    bool
 }
 
-func New(provider llm.Provider, exec *executor.Executor, model string, maxTokens int, temperature float64, maxIter int) *Agent {
+// AgentOption configures the Agent.
+type AgentOption func(*Agent)
+
+// WithBudget sets budget limits. Zero values mean unlimited.
+func WithBudget(maxIter, maxTokens int, maxCost float64) AgentOption {
+	return func(a *Agent) {
+		a.budget = NewBudgetTracker(maxIter, maxTokens, maxCost, a.model)
+	}
+}
+
+// WithAudit sets an audit callback for tool execution logging.
+func WithAudit(fn AuditFunc) AgentOption {
+	return func(a *Agent) {
+		a.auditFn = fn
+	}
+}
+
+func New(provider llm.Provider, exec *executor.Executor, model string, maxTokens int, temperature float64, maxIter int, opts ...AgentOption) *Agent {
+	reg := tools.New()
+	tools.RegisterDefaults(reg, exec)
+
 	a := &Agent{
 		provider:    provider,
 		exec:        exec,
+		registry:    reg,
 		model:       model,
 		maxTokens:   maxTokens,
 		temperature: temperature,
-		maxIter:     maxIter,
-		tools:       defaultTools(),
-		handlers:    make(map[string]ToolHandler),
+		budget:      NewBudgetTracker(maxIter, 0, 0, model),
 	}
-	a.registerHandlers()
+
+	for _, opt := range opts {
+		opt(a)
+	}
+
 	return a
 }
 
@@ -48,247 +76,60 @@ type ToolResult struct {
 }
 
 type StreamResult struct {
-	Token      string        // text token from LLM
-	Reasoning  string        // reasoning/thinking token from LLM
-	ToolCalls  []llm.ToolCall // tool calls being made (non-nil when LLM requests tools)
-	ToolResult *ToolResult   // result of executing a tool
-	Done       bool          // agent execution complete
+	Token      string          // text token from LLM
+	Reasoning  string          // reasoning/thinking token from LLM
+	ToolCalls  []llm.ToolCall  // tool calls being made
+	ToolResult *ToolResult     // result of executing a tool
+	Done       bool            // agent execution complete
 	Err        error
-}
-
-func defaultTools() []llm.ToolDef {
-	return []llm.ToolDef{
-		{
-			Type: "function",
-			Function: llm.ToolFuncDef{
-				Name:        "run_command",
-				Description: "Execute a shell command on the server",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"command": map[string]interface{}{
-							"type":        "string",
-							"description": "The shell command to execute",
-						},
-					},
-					"required": []string{"command"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFuncDef{
-				Name:        "read_file",
-				Description: "Read the contents of a file",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"path": map[string]interface{}{
-							"type":        "string",
-							"description": "Absolute path to the file",
-						},
-					},
-					"required": []string{"path"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFuncDef{
-				Name:        "write_file",
-				Description: "Create or overwrite a file with content",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"path": map[string]interface{}{
-							"type":        "string",
-							"description": "Absolute path to the file",
-						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "Content to write to the file",
-						},
-					},
-					"required": []string{"path", "content"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFuncDef{
-				Name:        "service_action",
-				Description: "Start, stop, restart, or reload a systemd service",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"action": map[string]interface{}{
-							"type": "string",
-							"enum": []string{"start", "stop", "restart", "reload", "status"},
-						},
-						"service": map[string]interface{}{
-							"type":        "string",
-							"description": "Systemd service name",
-						},
-					},
-					"required": []string{"action", "service"},
-				},
-			},
-		},
-		{
-			Type: "function",
-			Function: llm.ToolFuncDef{
-				Name:        "search_logs",
-				Description: "Search systemd journal logs",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"unit": map[string]interface{}{
-							"type":        "string",
-							"description": "Service unit name (optional)",
-						},
-						"priority": map[string]interface{}{
-							"type":        "string",
-							"description": "Log priority: emerg, alert, crit, err, warning, info",
-						},
-						"lines": map[string]interface{}{
-							"type":        "integer",
-							"description": "Number of lines to return",
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func (a *Agent) registerHandlers() {
-	a.handlers["run_command"] = func(ctx context.Context, args json.RawMessage) (string, error) {
-		var p struct {
-			Command string `json:"command"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-		result, err := a.exec.Run(ctx, p.Command)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		var b strings.Builder
-		b.WriteString(fmt.Sprintf("exit code: %d\n", result.ExitCode))
-		b.WriteString(fmt.Sprintf("duration: %s\n", result.Duration))
-		if result.Stdout != "" {
-			b.WriteString("stdout:\n" + result.Stdout)
-		}
-		if result.Stderr != "" {
-			b.WriteString("\nstderr:\n" + result.Stderr)
-		}
-		return b.String(), nil
-	}
-
-	a.handlers["read_file"] = func(ctx context.Context, args json.RawMessage) (string, error) {
-		var p struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-		data, err := os.ReadFile(p.Path)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		// Limit to 500 lines to keep responses manageable
-		lines := strings.Split(string(data), "\n")
-		if len(lines) > 500 {
-			lines = lines[:500]
-		}
-		return strings.Join(lines, "\n"), nil
-	}
-
-	a.handlers["write_file"] = func(ctx context.Context, args json.RawMessage) (string, error) {
-		var p struct {
-			Path    string `json:"path"`
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-		dir := path.Dir(p.Path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		if err := os.WriteFile(p.Path, []byte(p.Content), 0644); err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		return fmt.Sprintf("wrote %s (%d bytes)", p.Path, len(p.Content)), nil
-	}
-
-	a.handlers["service_action"] = func(ctx context.Context, args json.RawMessage) (string, error) {
-		var p struct {
-			Action  string `json:"action"`
-			Service string `json:"service"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-		if p.Action == "status" {
-			result, err := a.exec.Run(ctx, fmt.Sprintf("systemctl status %s --no-pager -l 2>&1 | head -30", p.Service))
-			if err != nil {
-				return fmt.Sprintf("error: %v", result.Stderr), nil
-			}
-			return result.Stdout, nil
-		}
-		result, err := a.exec.Run(ctx, fmt.Sprintf("systemctl %s %s 2>&1", p.Action, p.Service))
-		if err != nil {
-			return fmt.Sprintf("error: %v", result.Stderr), nil
-		}
-		return fmt.Sprintf("service %s %s: %s", p.Service, p.Action, result.Stdout), nil
-	}
-
-	a.handlers["search_logs"] = func(ctx context.Context, args json.RawMessage) (string, error) {
-		var p struct {
-			Unit     string `json:"unit"`
-			Priority string `json:"priority"`
-			Lines    int    `json:"lines"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return "", fmt.Errorf("invalid args: %w", err)
-		}
-		if p.Lines <= 0 || p.Lines > 200 {
-			p.Lines = 50
-		}
-		cmd := fmt.Sprintf("journalctl -n %d --no-pager", p.Lines)
-		if p.Unit != "" {
-			cmd += fmt.Sprintf(" -u %s", p.Unit)
-		}
-		if p.Priority != "" {
-			cmd += fmt.Sprintf(" -p %s", p.Priority)
-		}
-		result, err := a.exec.Run(ctx, cmd)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), nil
-		}
-		return result.Stdout, nil
-	}
 }
 
 func (a *Agent) ModelName() string {
 	return a.model
 }
 
-// SetModel updates the model name at runtime.
 func (a *Agent) SetModel(model string) {
 	a.model = model
 }
 
-// SetPlanMode enables or disables read-only plan mode.
-// In plan mode, destructive tool calls (run_command, write_file, service_action)
-// are blocked at the handler level — the LLM receives a clear error message.
 func (a *Agent) SetPlanMode(enabled bool) {
 	a.planMode = enabled
 }
 
-// RunStream executes the agent loop with streaming output for each LLM call.
-// It returns a channel of StreamResult that the caller reads for live output.
+// Registry returns the agent's tool registry, allowing external code to
+// register additional tools or inspect tool definitions.
+func (a *Agent) Registry() *tools.Registry {
+	return a.registry
+}
+
+// Budget returns the agent's budget tracker for inspecting usage mid-session.
+func (a *Agent) Budget() *BudgetTracker {
+	return a.budget
+}
+
+// exponentialBackoff sleeps for a duration that grows exponentially with the
+// retry attempt, plus random jitter. Formula: min(maxWait, base * 2^attempt)
+// Returns after sleeping, or immediately if ctx is cancelled.
+func exponentialBackoff(ctx context.Context, attempt int) {
+	if attempt <= 0 {
+		return
+	}
+	base := time.Second
+	maxWait := 30 * time.Second
+	delay := time.Duration(base) * (1 << uint(attempt-1))
+	if delay > maxWait {
+		delay = maxWait
+	}
+	// Add jitter: ±25%
+	jitter := time.Duration(float64(delay) * (0.75 + 0.5*rand.Float64()))
+	select {
+	case <-ctx.Done():
+	case <-time.After(jitter):
+	}
+}
+
+// RunStream executes the agent loop with streaming output.
+// It returns a channel of StreamResult for live output.
 // The channel is closed when the agent finishes.
 func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []llm.Message) (<-chan StreamResult, error) {
 	ch := make(chan StreamResult, 128)
@@ -299,17 +140,20 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 	}
 	fullMsgs = append(fullMsgs, messages...)
 
+	a.registry.ResetCounts()
+
 	go func() {
 		defer close(ch)
 
-		for iter := 0; iter < a.maxIter; iter++ {
-			events, err := a.provider.ChatStream(ctx, llm.ChatRequest{
-				Model:       a.model,
-				Messages:    fullMsgs,
-				Tools:       a.tools,
-				MaxTokens:   a.maxTokens,
-				Temperature: a.temperature,
-			})
+		for {
+			// Budget check
+			if err := a.budget.Allow(); err != nil {
+				ch <- StreamResult{Err: err}
+				return
+			}
+
+			// LLM call with retry
+			events, err := a.chatStreamWithRetry(ctx, fullMsgs)
 			if err != nil {
 				ch <- StreamResult{Err: fmt.Errorf("llm stream: %w", err)}
 				return
@@ -329,23 +173,22 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 					if evt.ToolCallDelta != nil {
 						tc := *evt.ToolCallDelta
 						toolCalls = append(toolCalls, tc)
-						ch <- StreamResult{
-							ToolCalls: []llm.ToolCall{tc},
-						}
+						ch <- StreamResult{ToolCalls: []llm.ToolCall{tc}}
 					}
 				case llm.EventError:
 					ch <- StreamResult{Err: evt.Error}
 					return
 				case llm.EventDone:
-					// stream complete for this LLM call
 				}
 			}
 
 			if len(toolCalls) == 0 {
-				// Final response
 				ch <- StreamResult{Done: true}
 				return
 			}
+
+			// Record iteration (no usage data from streaming, estimate: 1 token ≈ 4 chars)
+			a.budget.Record(0, content.Len()/4)
 
 			// Assistant message with tool calls
 			fullMsgs = append(fullMsgs, llm.Message{
@@ -354,49 +197,29 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 				ToolCalls: toolCalls,
 			})
 
-			// Execute each tool
+			// Execute each tool via the registry
 			for _, tc := range toolCalls {
-				handler, ok := a.handlers[tc.Function.Name]
-				if !ok {
-					output := fmt.Sprintf("unknown tool: %s", tc.Function.Name)
-					fullMsgs = append(fullMsgs, llm.Message{
-						Role:       llm.RoleTool,
-						Content:    output,
-						ToolCallID: tc.ID,
-					})
-					ch <- StreamResult{ToolResult: &ToolResult{
-						ToolCallID: tc.ID,
-						Name:       tc.Function.Name,
-						Output:     output,
-					}}
-					continue
-				}
+				start := time.Now()
+				output, err := a.registry.Execute(ctx, tc.Function.Name, json.RawMessage(tc.Function.Arguments), a.planMode)
+				duration := time.Since(start)
 
-				// Plan mode: block destructive actions at the handler level
-				if a.planMode {
-					switch tc.Function.Name {
-					case "run_command", "write_file", "service_action":
-						output := "⚠️ BLOCKED: " + tc.Function.Name + " is not available in plan mode. " +
-							"Switch to normal mode (/plan) or use read_file/search_logs instead."
-						fullMsgs = append(fullMsgs, llm.Message{
-							Role:       llm.RoleTool,
-							Content:    output,
-							ToolCallID: tc.ID,
-						})
-						ch <- StreamResult{ToolResult: &ToolResult{
-							ToolCallID: tc.ID,
-							Name:       tc.Function.Name,
-							Output:     output,
-						}}
-						continue
-					}
-					// read_file and search_logs fall through to the handler
-				}
-
-				output, err := handler(ctx, json.RawMessage(tc.Function.Arguments))
 				if err != nil {
 					output = fmt.Sprintf("tool error: %v", err)
 				}
+
+				// Audit logging
+				if a.auditFn != nil {
+					resultTrunc := output
+					if len(resultTrunc) > 200 {
+						resultTrunc = resultTrunc[:200]
+					}
+					argsTrunc := tc.Function.Arguments
+					if len(argsTrunc) > 100 {
+						argsTrunc = argsTrunc[:100]
+					}
+					a.auditFn(tc.Function.Name, argsTrunc, resultTrunc, err == nil, duration.Round(time.Millisecond).String(), a.budget.Iter)
+				}
+
 				fullMsgs = append(fullMsgs, llm.Message{
 					Role:       llm.RoleTool,
 					Content:    output,
@@ -408,11 +231,41 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 					Output:     output,
 				}}
 			}
-			// Continue loop — LLM will see tool results and produce final response
 		}
-
-		ch <- StreamResult{Err: fmt.Errorf("max iterations (%d) reached", a.maxIter)}
 	}()
 
 	return ch, nil
+}
+
+// chatStreamWithRetry calls ChatStream with exponential backoff on transient failures.
+func (a *Agent) chatStreamWithRetry(ctx context.Context, msgs []llm.Message) (<-chan llm.StreamEvent, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			exponentialBackoff(ctx, attempt)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+		}
+
+		events, err := a.provider.ChatStream(ctx, llm.ChatRequest{
+			Model:       a.model,
+			Messages:    msgs,
+			Tools:       a.registry.Schemas(),
+			MaxTokens:   a.maxTokens,
+			Temperature: a.temperature,
+		})
+
+		if err == nil {
+			return events, nil
+		}
+
+		// Non-retryable: context cancelled, auth errors
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		lastErr = err
+	}
+	return nil, fmt.Errorf("chat stream failed after 3 retries: %w", lastErr)
 }
