@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/syawalqi/flare/executor"
+	"github.com/syawalqi/oryx/executor"
 )
 
 type SystemInfo struct {
