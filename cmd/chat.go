@@ -30,7 +30,9 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 
 	// Create agent with budget tracking and audit logging
 	reflexCfg := agent.DefaultReflexionConfig()
-	reflexCfg.Enabled = true
+	reflexCfg.Enabled = false
+	// Reflexion disabled in chat mode — it adds extra LLM calls after
+	// the response that delay the Done signal and cause "streaming..." to hang.
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations,
 		agent.WithBudget(cfg.Agent.MaxIterations, 0, cfg.Agent.MaxCost),
 		agent.WithReflexion(reflexCfg),
@@ -39,9 +41,8 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 		}),
 	)
 
-	systemPrompt := "You are ORYX, a server management AI agent running as the `oryx chat` Go binary. You help manage a Linux VPS server. " +
-		"You have access to tools: run_command, read_file, write_file, service_action, search_logs. " +
-		"Use them to diagnose and fix issues. Be concise and direct.\n\n" +
+	systemPrompt := "You are ORYX, an AI agent running as `oryx chat`. You can run commands, read/write files, manage services, and search logs on a Linux VPS. " +
+		"Be concise and direct.\n\n" +
 		"## Identity\n" +
 		"- **Your process:** The one running `oryx chat`. Find it with `ps aux | grep 'oryx chat' | grep -v grep`. It should show ~17 MB RSS.\n" +
 		"- **Everything else:** Any other process you see (Python, MySQL, nginx, etc.) is a separate service. Do NOT attribute their resource usage to yourself.\n" +

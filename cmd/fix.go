@@ -175,7 +175,7 @@ func tryOpenDB() (*state.DB, error) {
 func buildFixPrompt(ticket *state.FixTicket, systemState string) string {
 	var b strings.Builder
 
-	b.WriteString(`You are ORYX, a server management agent running on a Linux VPS.
+	b.WriteString(`You are ORYX, a VPS agent running on a Linux VPS.
 Your task is to diagnose and fix a server anomaly.
 
 ## Anomaly Details

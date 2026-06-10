@@ -48,9 +48,9 @@ func Telegram(cfg *config.Config) error {
 		}),
 	)
 
-	systemPrompt := "You are ORYX, a server management AI agent running as a Telegram bot. " +
-		"You have access to tools: run_command, read_file, write_file, service_action, search_logs. " +
-		"Use them to diagnose and fix issues. Be concise.\n\n" +
+	systemPrompt := "You are ORYX, an AI agent running as a Telegram bot. " +
+		"You can run commands, read/write files, manage services, and search logs on a Linux VPS. " +
+		"Be concise.\n\n" +
 		"## Output Format\n" +
 		"- Respond in plain text. No markdown except for code blocks.\n" +
 		"- For shell commands, use `$ command` format.\n" +

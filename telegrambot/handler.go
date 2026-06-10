@@ -16,7 +16,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *Message) {
 	// /start or /help
 	text := strings.TrimSpace(msg.Text)
 	if text == "/start" || text == "/help" {
-		help := "🤖 *ORYX Agent*\n\nI'm a server management AI agent. Send me any task and I'll use my tools to help.\n\nAvailable commands:\n`/plan <goal>` — Plan-and-Execute mode\n`/status` — Show agent status\n`/help` — This message"
+		help := "🤖 *ORYX Agent*\n\nI'm an AI agent. Send me any task and I'll use my tools to help.\n\nAvailable commands:\n`/plan <goal>` — Plan-and-Execute mode\n`/status` — Show agent status\n`/help` — This message"
 		b.client.sendMessage(msg.Chat.ID, help)
 		return
 	}

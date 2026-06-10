@@ -152,6 +152,14 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 
 	go func() {
 		defer close(ch)
+		defer func() {
+			// Safety: if we exit without sending Done, send it now
+			// to prevent the TUI from hanging in "streaming..." state.
+			select {
+			case ch <- StreamResult{Done: true}:
+			default:
+			}
+		}()
 
 		for {
 			// Budget check
@@ -170,23 +178,36 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 			var content strings.Builder
 			var toolCalls []llm.ToolCall
 
-			for evt := range events {
-				switch evt.Type {
-				case llm.EventToken:
-					content.WriteString(evt.Content)
-					ch <- StreamResult{Token: evt.Content}
-				case llm.EventReasoning:
-					ch <- StreamResult{Reasoning: evt.Content}
-				case llm.EventToolCall:
-					if evt.ToolCallDelta != nil {
-						tc := *evt.ToolCallDelta
-						toolCalls = append(toolCalls, tc)
-						ch <- StreamResult{ToolCalls: []llm.ToolCall{tc}}
+			// Read events from stream with idle timeout.
+			// If the server never sends [DONE] or closes the connection,
+			// this prevents the TUI from hanging in "streaming..." state.
+		eventLoop:
+			for {
+				select {
+				case evt, ok := <-events:
+					if !ok {
+						break eventLoop
 					}
-				case llm.EventError:
-					ch <- StreamResult{Err: evt.Error}
-					return
-				case llm.EventDone:
+					switch evt.Type {
+					case llm.EventToken:
+						content.WriteString(evt.Content)
+						ch <- StreamResult{Token: evt.Content}
+					case llm.EventReasoning:
+						ch <- StreamResult{Reasoning: evt.Content}
+					case llm.EventToolCall:
+						if evt.ToolCallDelta != nil {
+							tc := *evt.ToolCallDelta
+							toolCalls = append(toolCalls, tc)
+							ch <- StreamResult{ToolCalls: []llm.ToolCall{tc}}
+						}
+					case llm.EventError:
+						ch <- StreamResult{Err: evt.Error}
+						return
+					case llm.EventDone:
+					}
+				case <-time.After(10 * time.Second):
+					// Idle timeout — no events for 10s, assume stream ended
+					break eventLoop
 				}
 			}
 

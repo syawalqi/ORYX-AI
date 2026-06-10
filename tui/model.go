@@ -65,6 +65,8 @@ type Model struct {
 
 	// Streaming state
 	loading         bool
+	streamCancel    context.CancelFunc
+	streamWatchdog  *time.Timer
 	streamCh        <-chan agent.StreamResult
 	streamContent   strings.Builder
 	streamReasoning strings.Builder
@@ -214,7 +216,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			content := info.Render()
 			os.WriteFile(m.memoryPath, []byte(content), 0644)
 			m.sidebarData.UpdateFromScan(info)
-			m.updateViewport()
 		}
 		return m, nil
 
@@ -399,6 +400,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.loading {
 		if key == "ctrl+c" {
 			m.loading = false
+			m.cancelStream()
 			m.streamCh = nil
 			m.finalizeStream()
 			m.updateViewport()
@@ -543,7 +545,9 @@ func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
 	m.streamToolRun = false
 	m.loading = true
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	m.streamCancel = cancel
+
 	userMsg := llm.Message{Role: llm.RoleUser, Content: input}
 
 	m.messages = append(m.messages, ChatMessage{Role: "user", Content: input})
@@ -566,6 +570,7 @@ func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
 	ch, err := m.agent.RunStream(ctx, prompt, msgs)
 	if err != nil {
 		m.loading = false
+		m.cancelStream()
 		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("stream error: %v", err)})
 		m.updateViewport()
 		return m, nil
@@ -714,6 +719,14 @@ type convListMsg struct {
 	convs []state.Conversation
 }
 
+// cancelStream cancels the streaming context if active.
+func (m *Model) cancelStream() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+		m.streamCancel = nil
+	}
+}
+
 func (m *Model) pollStream() tea.Cmd {
 	return func() tea.Msg {
 		result, ok := <-m.streamCh
@@ -727,6 +740,7 @@ func (m *Model) pollStream() tea.Cmd {
 func (m *Model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cmd) {
 	if result.Err != nil {
 		m.loading = false
+		m.cancelStream()
 		m.streamCh = nil
 		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("error: %v", result.Err)})
 		m.updateViewport()
@@ -787,6 +801,7 @@ func (m *Model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 
 	if result.Done {
 		m.loading = false
+		m.cancelStream()
 		m.streamCh = nil
 		m.finalizeStream()
 		m.updateViewport()

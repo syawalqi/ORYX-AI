@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type OpenAIProvider struct {
@@ -156,7 +157,12 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest) (<-cha
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set(hdr, val)
 
-	httpResp, err := p.client.Do(httpReq)
+	// Separate client with timeout for streaming — prevents hang if server
+	// never sends [DONE] or closes the connection after the response body.
+	streamClient := &http.Client{
+		Timeout: 180 * time.Second,
+	}
+	httpResp, err := streamClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("http: %w", err)
 	}
