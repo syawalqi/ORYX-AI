@@ -26,7 +26,7 @@ ORYX runs as a lightweight daemon (~9 MB RAM) that checks your server every minu
 - **Plan mode** (Ctrl+P) — read-only analysis mode, blocks destructive actions
 - **Reasoning toggle** (Ctrl+R) — expand/collapse LLM reasoning blocks
 - **Sidebar** (Ctrl+S) — server status at a glance (CPU, RAM, disk, uptime)
-- **Command palette** — `/help`, `/scan`, `/config`, `/memory`, `/save`, `/update`, `/model`
+- **Command palette** — `/help`, `/scan`, `/config`, `/memory`, `/save`, `/model`
 - **Session resume** — `--resume` flag to continue previous conversations
 
 ### 🤖 Agent Capabilities
@@ -77,9 +77,6 @@ oryx daemon
 
 # Start Telegram bot
 oryx telegram
-
-# Check for updates
-oryx --update
 ```
 
 ## Screenshots
@@ -102,7 +99,6 @@ oryx --update
 | `oryx alert` | Send an alert via configured channels |
 | `oryx telegram` | Start Telegram bot gateway |
 | `oryx --resume` | Resume last conversation |
-| `oryx --update` | Check for and apply updates |
 
 ### TUI Commands
 
@@ -117,7 +113,6 @@ oryx --update
 | `/model <id>` | Change LLM model |
 | `/plan` | Toggle plan mode (read-only) |
 | `/save` | Save conversation to /tmp/ |
-| `/update` | Check for and apply updates |
 | `/clear` | Clear chat history |
 | `/quit` | Exit |
 
