@@ -748,6 +748,13 @@ func (m *Model) handleStreamResult(result agent.StreamResult) (tea.Model, tea.Cm
 		return m, nil
 	}
 
+	if result.Revised {
+		// Reflexion replaced the response — discard original, start fresh
+		m.streamContent.Reset()
+		m.streamReasoning.Reset()
+		m.streamMsgs = nil
+	}
+
 	if result.Token != "" {
 		m.streamContent.WriteString(result.Token)
 		m.streamToolRun = false

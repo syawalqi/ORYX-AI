@@ -30,9 +30,7 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 
 	// Create agent with budget tracking and audit logging
 	reflexCfg := agent.DefaultReflexionConfig()
-	reflexCfg.Enabled = false
-	// Reflexion disabled in chat mode — it adds extra LLM calls after
-	// the response that delay the Done signal and cause "streaming..." to hang.
+	reflexCfg.Enabled = true
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations,
 		agent.WithBudget(cfg.Agent.MaxIterations, 0, cfg.Agent.MaxCost),
 		agent.WithReflexion(reflexCfg),
