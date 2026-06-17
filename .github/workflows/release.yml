@@ -17,29 +17,32 @@ jobs:
         with:
           go-version: "1.22"
 
-      - name: Build amd64
-        run: GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o oryx-linux-amd64 .
-
-      - name: Build arm64
-        run: GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o oryx-linux-arm64 .
-
       - name: Get commit info
         id: info
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
+          FULL_SHA=$(git rev-parse HEAD)
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
           echo "commit_msg=$(git log -1 --pretty=%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Build amd64
+        run: GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=dev-${{ steps.info.outputs.short_sha }}" -o oryx-linux-amd64 .
+
+      - name: Build arm64
+        run: GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=dev-${{ steps.info.outputs.short_sha }}" -o oryx-linux-arm64 .
 
       - name: Delete old latest release
         run: gh release delete latest -y --cleanup-tag 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create latest release
+      - name: Create latest release (pre-release)
         run: |
           gh release create latest \
-            --title "ORYX (latest)" \
+            --title "ORYX (dev)" \
             --notes "Auto-built from commit ${{ steps.info.outputs.short_sha }}: ${{ steps.info.outputs.commit_msg }}" \
+            --prerelease \
             oryx-linux-amd64 \
             oryx-linux-arm64
         env:

@@ -18,6 +18,7 @@ type CmdBarItem struct {
 var CmdBarItems = []CmdBarItem{
 	{Label: "/save", Desc: "save conversation to state DB"},
 	{Label: "/load", Desc: "load a saved conversation"},
+	{Label: "/update", Desc: "self-update ORYX (--dev, --force)"},
 	{Label: "/plan", Desc: "toggle plan mode (read-only)"},
 	{Label: "/help", Desc: "show key bindings"},
 	{Label: "/exit", Desc: "quit ORYX"},

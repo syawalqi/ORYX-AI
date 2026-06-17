@@ -25,7 +25,19 @@ func main() {
 	case "chat":
 		runChat(cfg)
 	case "--update", "update":
-		if err := cmd.Update(version); err != nil {
+		force := false
+		trackOverride := ""
+		for _, arg := range os.Args[2:] {
+			switch arg {
+			case "--force", "-f":
+				force = true
+			case "--dev":
+				trackOverride = "dev"
+			case "--stable":
+				trackOverride = "stable"
+			}
+		}
+		if err := cmd.Update(version, force, trackOverride); err != nil {
 			fmt.Fprintf(os.Stderr, "update error: %v\n", err)
 			os.Exit(1)
 		}
@@ -97,13 +109,16 @@ func usage() {
 	fmt.Print(`ORYX — General Management AI Agent
 
 Usage:
-  oryx setup      Interactive first-run configuration
-  oryx chat       Interactive chat with LLM agent
-  oryx --update   Self-update to latest version
-  oryx telegram   Run as Telegram bot (long-polling)
-  oryx daemon     Background monitoring daemon
-  oryx fix        Fix an anomaly (auto-remediate with LLM)
-  oryx alert      Send an alert (script hook)
-  oryx help       Show this help
+  oryx setup       Interactive first-run configuration
+  oryx chat        Interactive chat with LLM agent
+  oryx --update    Self-update (checks track: stable/dev)
+    --dev            Update from dev track (latest commits)
+    --stable         Update from stable track (tagged releases)
+    --force          Skip version check, always download
+  oryx telegram    Run as Telegram bot (long-polling)
+  oryx daemon      Background monitoring daemon
+  oryx fix         Fix an anomaly (auto-remediate with LLM)
+  oryx alert       Send an alert (script hook)
+  oryx help        Show this help
 `)
 }

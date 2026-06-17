@@ -541,10 +541,22 @@ func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
 			}
 			return m, m.loadConversationList()
 		case "/update":
+			force := false
+			trackOverride := ""
+			for _, arg := range strings.Fields(input) {
+				switch arg {
+				case "--force", "-f":
+					force = true
+				case "--dev":
+					trackOverride = "dev"
+				case "--stable":
+					trackOverride = "stable"
+				}
+			}
 			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "⏳ Updating ORYX..."})
 			m.updateViewport()
 			m.viewport.GotoBottom()
-			return m, m.runUpdate()
+			return m, m.runUpdate(force, trackOverride)
 		}
 	}
 
@@ -742,10 +754,15 @@ type updateResultMsg struct {
 	version string
 }
 
-func (m *Model) runUpdate() tea.Cmd {
+func (m *Model) runUpdate(force bool, trackOverride string) tea.Cmd {
 	version := m.version
 	return func() tea.Msg {
-		err := updatepkg.Run(version)
+		var err error
+		if trackOverride != "" {
+			err = updatepkg.RunWithTrack(version, updatepkg.Track(trackOverride), force)
+		} else {
+			err = updatepkg.Run(version, force)
+		}
 		return updateResultMsg{err: err, version: version}
 	}
 }
