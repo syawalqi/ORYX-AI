@@ -516,48 +516,9 @@ func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Handle slash commands
+	// Delegate slash commands to handleCommand
 	if strings.HasPrefix(input, "/") {
-		switch input {
-		case "/save":
-			if m.db == nil {
-				m.messages = append(m.messages, ChatMessage{Role: "error", Content: "no state database available"})
-				m.updateViewport()
-				return m, nil
-			}
-			ts := fmt.Sprintf("chat-%d", time.Now().Unix())
-			if err := m.db.SaveConversation(ts, m.history, m.agent.ModelName()); err != nil {
-				m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("save failed: %v", err)})
-			} else {
-				m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: fmt.Sprintf("💾 Conversation saved as `%s` (%d messages)", ts, len(m.history))})
-			}
-			m.updateViewport()
-			return m, nil
-		case "/load":
-			if m.db == nil {
-				m.messages = append(m.messages, ChatMessage{Role: "error", Content: "no state database available"})
-				m.updateViewport()
-				return m, nil
-			}
-			return m, m.loadConversationList()
-		case "/update":
-			force := false
-			trackOverride := ""
-			for _, arg := range strings.Fields(input) {
-				switch arg {
-				case "--force", "-f":
-					force = true
-				case "--dev":
-					trackOverride = "dev"
-				case "--stable":
-					trackOverride = "stable"
-				}
-			}
-			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "⏳ Updating ORYX..."})
-			m.updateViewport()
-			m.viewport.GotoBottom()
-			return m, m.runUpdate(force, trackOverride)
-		}
+		return m, m.handleCommand(input)
 	}
 
 	m.streamContent.Reset()

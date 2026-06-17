@@ -39,7 +39,7 @@ func Telegram(cfg *config.Config) error {
 
 	// Create agent with budget and audit
 	reflexCfg := agent.DefaultReflexionConfig()
-	reflexCfg.Enabled = true
+	reflexCfg.Enabled = false
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations,
 		agent.WithBudget(cfg.Agent.MaxIterations, 0, cfg.Agent.MaxCost),
 		agent.WithReflexion(reflexCfg),
