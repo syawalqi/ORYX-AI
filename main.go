@@ -24,6 +24,11 @@ func main() {
 	switch subcommand {
 	case "chat":
 		runChat(cfg)
+	case "--update", "update":
+		if err := cmd.Update(version); err != nil {
+			fmt.Fprintf(os.Stderr, "update error: %v\n", err)
+			os.Exit(1)
+		}
 	case "fix":
 		if err := cmd.Fix(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "fix error: %v\n", err)
@@ -94,6 +99,7 @@ func usage() {
 Usage:
   oryx setup      Interactive first-run configuration
   oryx chat       Interactive chat with LLM agent
+  oryx --update   Self-update to latest version
   oryx telegram   Run as Telegram bot (long-polling)
   oryx daemon     Background monitoring daemon
   oryx fix        Fix an anomaly (auto-remediate with LLM)

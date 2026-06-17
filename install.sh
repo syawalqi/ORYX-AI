@@ -22,14 +22,15 @@ esac
 
 ASSET="oryx-${OS}-${ARCH}"
 
-# Auto-detect latest version from GitHub API
-echo "🔍 Checking latest version..."
-VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
-
-if [ -z "$VERSION" ]; then
-    echo "⚠️  Could not detect latest version, using v1.2.0"
-    VERSION="v1.2.0"
-fi
+# Determine version: --tag flag, or default to "latest"
+VERSION="latest"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tag) VERSION="$2"; shift 2 ;;
+        --tag=*) VERSION="${1#--tag=}"; shift ;;
+        *) shift ;;
+    esac
+done
 
 echo "📦 Downloading ORYX ${VERSION} for ${OS}/${ARCH}..."
 
@@ -52,3 +53,4 @@ sudo mv "/tmp/${ASSET}" "${INSTALL_DIR}/${BIN_NAME}"
 echo "✅ ORYX ${VERSION} installed to ${INSTALL_DIR}/${BIN_NAME}"
 echo ""
 echo "Run 'oryx setup' to configure your API key, then 'oryx' to start chatting."
+echo "To self-update later: oryx --update"
