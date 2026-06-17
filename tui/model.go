@@ -17,6 +17,7 @@ import (
 	"github.com/syawalqi/oryx/llm"
 	"github.com/syawalqi/oryx/memory"
 	"github.com/syawalqi/oryx/state"
+	"github.com/syawalqi/oryx/updatepkg"
 )
 
 // borderOverhead is the total horizontal space consumed by the double border
@@ -221,6 +222,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case streamResultMsg:
 		return m.handleStreamResult(msg.result)
+
+	case updateResultMsg:
+		return m.handleUpdateResult(msg)
 
 	case editorFinishedMsg:
 		m.loading = false
@@ -536,6 +540,11 @@ func (m *Model) sendMessage() (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.loadConversationList()
+		case "/update":
+			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "⏳ Updating ORYX..."})
+			m.updateViewport()
+			m.viewport.GotoBottom()
+			return m, m.runUpdate()
 		}
 	}
 
@@ -725,6 +734,31 @@ func (m *Model) cancelStream() {
 		m.streamCancel()
 		m.streamCancel = nil
 	}
+}
+
+// updateResultMsg carries the result of a self-update.
+type updateResultMsg struct {
+	err     error
+	version string
+}
+
+func (m *Model) runUpdate() tea.Cmd {
+	version := m.version
+	return func() tea.Msg {
+		err := updatepkg.Run(version)
+		return updateResultMsg{err: err, version: version}
+	}
+}
+
+func (m *Model) handleUpdateResult(msg updateResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.messages = append(m.messages, ChatMessage{Role: "error", Content: fmt.Sprintf("update failed: %v", msg.err)})
+	} else {
+		m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: "✅ Update complete! Restart ORYX to use the new version."})
+	}
+	m.updateViewport()
+	m.viewport.GotoBottom()
+	return m, nil
 }
 
 func (m *Model) pollStream() tea.Cmd {
