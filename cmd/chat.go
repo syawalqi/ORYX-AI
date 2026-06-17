@@ -30,7 +30,7 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 
 	// Create agent with budget tracking and audit logging
 	reflexCfg := agent.DefaultReflexionConfig()
-	reflexCfg.Enabled = true
+	reflexCfg.Enabled = false
 	ag := agent.New(prov, exec, cfg.Model, cfg.Agent.MaxTokens, cfg.Agent.Temperature, cfg.Agent.MaxIterations,
 		agent.WithBudget(cfg.Agent.MaxIterations, 0, cfg.Agent.MaxCost),
 		agent.WithReflexion(reflexCfg),
@@ -49,6 +49,18 @@ func Chat(cfg *config.Config, buildVersion string, resume bool) error {
 		"- Respond in PLAIN TEXT only. No Markdown, no formatting, no bullet symbols, no bold, no tables.\n" +
 		"- Use simple indentation or dashes for lists.\n" +
 		"- Code examples or commands: put them on their own line, prefixed with `$ ` for shell commands."
+
+	// Add inline reflection instruction
+	systemPrompt += `
+## Thinking Style
+Think step-by-step before answering. For each problem:
+1. Restate what you understand
+2. Identify key constraints or risks
+3. Consider 1-2 alternatives
+4. Decide and explain your reasoning
+5. Double-check your answer for correctness
+
+This is your internal reasoning process. Do it within the same response, not as a separate step. If you catch an error in your reasoning, correct it inline.`
 
 	memoryPath := os.ExpandEnv("$HOME/.config/oryx/memory.md")
 	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {
