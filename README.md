@@ -228,14 +228,24 @@ Requires Go 1.22+.
 ## Updating
 
 ```bash
-# Stable track (tagged releases)
+# Stable track (tagged releases) — default
 oryx --update
 
-# Dev track (latest commits)
+# Dev track (latest commits, bleeding edge)
 oryx --update --dev
 
 # Force update (skip version check)
 oryx --update --force
+```
+
+To switch from stable to dev (or vice versa), just pass the track flag once — it saves your preference:
+
+```bash
+# Switch to dev track
+oryx --update --dev
+
+# Now plain `oryx --update` uses dev
+oryx --update
 ```
 
 ## Requirements
