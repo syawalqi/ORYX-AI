@@ -816,6 +816,11 @@ func (m *Model) finalizeStream() {
 	content := strings.TrimRight(m.streamContent.String(), "\n")
 	reasoning := strings.TrimRight(m.streamReasoning.String(), "\n")
 
+	// Reset stream buffers so renderMessages doesn't duplicate the content
+	m.streamContent.Reset()
+	m.streamReasoning.Reset()
+	m.streamMsgs = nil
+
 	if content != "" || reasoning != "" || len(m.streamMsgs) > 0 {
 		msg := ChatMessage{
 			Role:      "assistant",
