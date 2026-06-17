@@ -1,0 +1,42 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Get tag info
+        id: info
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "commit_msg=$(git log -1 --pretty=%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Build amd64
+        run: GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.info.outputs.tag }}" -o oryx-linux-amd64 .
+
+      - name: Build arm64
+        run: GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ steps.info.outputs.tag }}" -o oryx-linux-arm64 .
+
+      - name: Create stable release
+        run: |
+          gh release create ${{ steps.info.outputs.tag }} \
+            --title "ORYX ${{ steps.info.outputs.tag }}" \
+            --notes "Stable release ${{ steps.info.outputs.tag }}: ${{ steps.info.outputs.commit_msg }}" \
+            oryx-linux-amd64 \
+            oryx-linux-arm64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
