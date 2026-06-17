@@ -54,6 +54,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg *Message) {
 			response.WriteString(fmt.Sprintf("\n\n⚠️ Error: %v", result.Err))
 			break
 		}
+		if result.Revised {
+			// Reflexion replaced the response — discard original, start fresh
+			response.Reset()
+			reasoning.Reset()
+		}
 		if result.Token != "" {
 			response.WriteString(result.Token)
 		}

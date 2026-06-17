@@ -88,6 +88,7 @@ type StreamResult struct {
 	Reasoning  string          // reasoning/thinking token from LLM
 	ToolCalls  []llm.ToolCall  // tool calls being made
 	ToolResult *ToolResult     // result of executing a tool
+	Revised    bool            // true when Reflexion replaced the response
 	Done       bool            // agent execution complete
 	Err        error
 }
@@ -216,7 +217,8 @@ func (a *Agent) RunStream(ctx context.Context, systemPrompt string, messages []l
 				if a.reflexion.Enabled {
 					revisedContent, didRevise, refErr := a.RunReflexion(ctx, fullMsgs)
 					if refErr == nil && didRevise && revisedContent != "" {
-						// Send the revised content as replacement tokens
+						// Signal handler to reset, then send revised content
+						ch <- StreamResult{Revised: true}
 						ch <- StreamResult{Reasoning: "🤖 Self-critique: revised response for quality"}
 						ch <- StreamResult{Token: revisedContent}
 					}
